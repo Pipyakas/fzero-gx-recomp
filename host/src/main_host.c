@@ -12,6 +12,7 @@ extern int gx_vulkan_init(void);
 extern int gx_vulkan_create_surface(HWND hwnd, HINSTANCE hi);
 extern void gx_vulkan_draw_frame(void);
 extern void gx_vulkan_shutdown(void);
+extern void gx_vulkan_set_clear(float r,float g,float b);
 
 static int g_vk = 0; // 0=null, 1=ok, -1=failed
 
@@ -70,15 +71,26 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, PWSTR cmd, int show) {
 #endif
     printf("Window 960x540 — close to exit. WSI=%s\n", g_vk==1?"Vulkan":"GDI");
 
-    // Frame loop: PeekMessage so we can present at ~60Hz even without WM_PAINT.
-    MSG msg; DWORD lastTitle=0;
+    MSG msg; DWORD lastTitle=0; uint32_t lastFr=0;
     while(1){
         while(PeekMessageW(&msg,NULL,0,0,PM_REMOVE)){
             if(msg.message==WM_QUIT) goto done;
             TranslateMessage(&msg); DispatchMessageW(&msg);
         }
         if(recomp_inited()) recomp_run_slice();
-        if(GetTickCount()-lastTitle>500){ lastTitle=GetTickCount(); wchar_t t[128]; swprintf(t,128,L"F-Zero GX — Host pc=0x%08X", recomp_pc()); SetWindowTextW(w,t); }
+        if(GetTickCount()-lastTitle>300){
+            lastTitle=GetTickCount();
+            uint32_t gb=recomp_gp_bytes(), fr=recomp_frames();
+            uint64_t mr=recomp_mmio_reads();
+            // guest-driven clear: prove FIFO is live — green pulse when guest flushed
+            if(g_vk==1){
+                if(fr!=lastFr){ gx_vulkan_set_clear(0.08f,0.55f,0.22f); lastFr=fr; }
+                else if(gb>32) gx_vulkan_set_clear(0.18f,0.42f,0.78f);
+                else gx_vulkan_set_clear(6.0f/255,24.0f/255,64.0f/255);
+            }
+            wchar_t t[160]; swprintf(t,160,L"F-Zero GX pc=0x%08X gp=%u fr=%u mmio=%llu", recomp_pc(), gb, fr, (unsigned long long)mr);
+            SetWindowTextW(w,t);
+        }
 #ifndef HOST_GX_NULL
         if(g_vk==1) gx_vulkan_draw_frame();
 #endif

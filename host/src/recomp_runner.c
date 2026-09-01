@@ -11,6 +11,18 @@ static int g_inited = 0;
 static u64 g_tb = 0;
 static uint64_t s_mmio_reads=0, s_mmio_writes=0;
 static uint32_t s_last_exc_pc=0, s_last_exc=0;
+// GX gather pipe -> Vulkan: guest stores to 0xCC008000 land here
+#define GP_SIZE (128*1024)
+static uint8_t s_gp_buf[GP_SIZE + 64];
+static uint8_t *s_gp_ptr = s_gp_buf;
+static uint8_t *s_gp_base_ptr = s_gp_buf;
+static uint8_t *s_gp_ptr_storage = NULL;
+static uint8_t **s_gp_cursor_ref = NULL;
+static uint64_t s_gp_flushes=0, s_gp_bytes=0;
+static uint32_t s_frames=0;
+static void gp_flush(void* u){ (void)u; s_gp_flushes++; s_gp_bytes += (uint64_t)(s_gp_ptr - s_gp_base_ptr); if((s_gp_ptr - s_gp_base_ptr)>64) s_frames++; s_gp_ptr = s_gp_base_ptr; if(s_gp_cursor_ref) *s_gp_cursor_ref = s_gp_ptr; }
+extern void ppc_set_gather_pipe(uint8_t** cursor, uint8_t* const* base, void (*flush)(void*), void* user, const unsigned char* bypass);
+extern float gx_guest_frame_progress(void); // provided by gx_vulkan
 
 static uint64_t hle_external_read(CPUState* cpu, uint32_t addr, uint8_t size){
     s_mmio_reads++;
@@ -98,10 +110,14 @@ int recomp_init(const char* dol_path) {
     g_cpu.host_call = hle_host_call;
     g_cpu.timebase = 0;
     if(!load_dol(dol_path, &g_cpu)){ cpu_free(&g_cpu); return 0; }
+    // install gather pipe so 0xCC008000 stores land in s_gp_buf instead of external_write
+    s_gp_ptr = s_gp_buf; s_gp_base_ptr = s_gp_buf; s_gp_ptr_storage = s_gp_buf;
+    s_gp_cursor_ref = &s_gp_ptr_storage;
+    ppc_set_gather_pipe(&s_gp_ptr_storage, (uint8_t* const*)&s_gp_base_ptr, gp_flush, NULL, NULL);
     g_inited = 1;
     return 1;
 }
-void recomp_shutdown(void){ if(g_inited){ cpu_free(&g_cpu); g_inited=0; } }
+void recomp_shutdown(void){ ppc_set_gather_pipe(NULL,NULL,NULL,NULL,NULL); if(g_inited){ cpu_free(&g_cpu); g_inited=0; } }
 void recomp_run_slice(void){
     if(!g_inited) return;
     g_cpu.timebase += 486000000ULL/240;
@@ -124,3 +140,6 @@ void recomp_run_slice(void){
 }
 unsigned recomp_pc(void){ return g_cpu.pc; }
 int recomp_inited(void){ return g_inited; }
+uint32_t recomp_gp_bytes(void){ return (uint32_t)(s_gp_ptr - s_gp_base_ptr); }
+uint32_t recomp_frames(void){ return s_frames; }
+uint64_t recomp_mmio_reads(void){ return s_mmio_reads; }

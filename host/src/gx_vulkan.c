@@ -27,6 +27,8 @@ static VkFramebuffer g_fbs[8] = {0};
 static VkExtent2D g_ext = {960,540};
 static uint32_t g_qfam = 0;
 static int g_inited = 0, g_failed = 0, g_has_swap = 0;
+static float g_clear[4] = {6.0f/255.0f,24.0f/255.0f,64.0f/255.0f,1.0f};
+void gx_vulkan_set_clear(float r,float g,float b){ g_clear[0]=r; g_clear[1]=g; g_clear[2]=b; }
 
 static void vklog(const char *m, VkResult r){ fprintf(stderr,"[gx_vk] %s: %d\n",m,(int)r); }
 
@@ -153,7 +155,7 @@ void gx_vulkan_draw_frame(void){
     vkResetCommandPool(g_dev,g_pool,0);
     VkCommandBufferBeginInfo bi={0}; bi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO; bi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(g_cmd,&bi);
-    VkClearValue cv; cv.color.float32[0]=6.0f/255.0f; cv.color.float32[1]=24.0f/255.0f; cv.color.float32[2]=64.0f/255.0f; cv.color.float32[3]=1.0f;
+    VkClearValue cv; cv.color.float32[0]=g_clear[0]; cv.color.float32[1]=g_clear[1]; cv.color.float32[2]=g_clear[2]; cv.color.float32[3]=g_clear[3];
     VkRenderPassBeginInfo rp={0}; rp.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp.renderPass=g_rp; rp.framebuffer=g_fbs[idx]; rp.renderArea.extent=g_ext; rp.clearValueCount=1; rp.pClearValues=&cv;
     vkCmdBeginRenderPass(g_cmd,&rp,VK_SUBPASS_CONTENTS_INLINE);
