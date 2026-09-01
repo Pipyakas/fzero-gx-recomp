@@ -1,6 +1,7 @@
 // host/src/main_host.c — Windows host entry with Vulkan WSI.
 #include <stdio.h>
 #include "../recomp_runner.h"
+#include "gx_fifo_bridge.h"
 #ifdef _WIN32
 #include <windows.h>
 
@@ -84,11 +85,12 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, PWSTR cmd, int show) {
             uint64_t mr=recomp_mmio_reads();
             // guest-driven clear: prove FIFO is live — green pulse when guest flushed
             if(g_vk==1){
-                if(fr!=lastFr){ gx_vulkan_set_clear(0.08f,0.55f,0.22f); lastFr=fr; }
+                uint64_t d=gx_fifo_draws(); static uint64_t lastD=0; if(d!=lastD){ gx_vulkan_set_clear(0.08f,0.55f,0.22f); lastD=d; lastFr=fr; } else if(fr!=lastFr){ gx_vulkan_set_clear(0.18f,0.42f,0.78f); lastFr=fr; }
                 else if(gb>32) gx_vulkan_set_clear(0.18f,0.42f,0.78f);
                 else gx_vulkan_set_clear(6.0f/255,24.0f/255,64.0f/255);
             }
-            wchar_t t[160]; swprintf(t,160,L"F-Zero GX pc=0x%08X gp=%u fr=%u mmio=%llu", recomp_pc(), gb, fr, (unsigned long long)mr);
+            uint64_t draws=gx_fifo_draws(), cmds=gx_fifo_cmds();
+            wchar_t t[192]; swprintf(t,192,L"F-Zero GX pc=0x%08X gp=%u fr=%u draws=%llu cmds=%llu mmio=%llu", recomp_pc(), gb, fr, (unsigned long long)draws, (unsigned long long)cmds, (unsigned long long)mr);
             SetWindowTextW(w,t);
         }
 #ifndef HOST_GX_NULL

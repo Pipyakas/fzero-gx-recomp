@@ -5,6 +5,7 @@
 #include <string.h>
 #include "../../vendor/RingOut/DolRecomp/src/cpu/cpu.h"
 #include "../../build/recomp_all/generated/dol/generated/generated.h"
+#include "gx_fifo_bridge.h"
 
 static CPUState g_cpu;
 static int g_inited = 0;
@@ -20,7 +21,7 @@ static uint8_t *s_gp_ptr_storage = NULL;
 static uint8_t **s_gp_cursor_ref = NULL;
 static uint64_t s_gp_flushes=0, s_gp_bytes=0;
 static uint32_t s_frames=0;
-static void gp_flush(void* u){ (void)u; s_gp_flushes++; s_gp_bytes += (uint64_t)(s_gp_ptr - s_gp_base_ptr); if((s_gp_ptr - s_gp_base_ptr)>64) s_frames++; s_gp_ptr = s_gp_base_ptr; if(s_gp_cursor_ref) *s_gp_cursor_ref = s_gp_ptr; }
+static void gp_flush(void* u){ (void)u; size_t n=(size_t)(s_gp_ptr - s_gp_base_ptr); if(n){ gx_fifo_write(s_gp_base_ptr, n); s_gp_bytes += (uint64_t)n; if(n>64) s_frames++; } s_gp_flushes++; s_gp_ptr = s_gp_base_ptr; if(s_gp_cursor_ref) *s_gp_cursor_ref = s_gp_ptr; }
 extern void ppc_set_gather_pipe(uint8_t** cursor, uint8_t* const* base, void (*flush)(void*), void* user, const unsigned char* bypass);
 extern float gx_guest_frame_progress(void); // provided by gx_vulkan
 

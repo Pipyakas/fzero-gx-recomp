@@ -53,6 +53,7 @@ endif()
 file(GLOB RECOMP_DOL_CHUNKS "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp_all/generated/dol/generated/chunks/*.c")
 
 add_library(recomp_core STATIC
+    src/gx_fifo_bridge.c
     src/recomp_runner.c
     ../vendor/RingOut/DolRecomp/src/cpu/cpu.c
     ${RECOMP_DOL_CHUNKS}
