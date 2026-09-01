@@ -9,6 +9,37 @@
 static CPUState g_cpu;
 static int g_inited = 0;
 static u64 g_tb = 0;
+static uint64_t s_mmio_reads=0, s_mmio_writes=0;
+static uint32_t s_last_exc_pc=0, s_last_exc=0;
+
+static uint64_t hle_external_read(CPUState* cpu, uint32_t addr, uint8_t size){
+    s_mmio_reads++;
+    if(s_mmio_reads<8) fprintf(stderr,"[hle] read%u 0x%08X\n",size,addr);
+    (void)cpu;
+    // DVD/DSP/GX regs return 0; keep guest moving
+    if((addr&0xFF000000u)==0xCC000000u || (addr&0xFF000000u)==0xCD000000u) return 0;
+    return 0;
+}
+static void hle_external_write(CPUState* cpu, uint32_t addr, uint64_t val, uint8_t size){
+    s_mmio_writes++;
+    if(s_mmio_writes<8) fprintf(stderr,"[hle] write%u 0x%08X <- 0x%llX\n",size,addr,(unsigned long long)val);
+    (void)cpu;
+}
+static uint32_t hle_external_read32(CPUState* cpu, uint32_t addr, uint8_t rid){
+    (void)cpu;(void)rid; s_mmio_reads++; return 0;
+}
+static void hle_external_write32(CPUState* cpu, uint32_t addr, uint32_t val, uint8_t rid){
+    (void)cpu;(void)rid; s_mmio_writes++;
+}
+static void hle_fallback(CPUState* cpu, uint32_t raw, uint32_t cia){
+    fprintf(stderr,"[hle] fallback raw=0x%08X @0x%08X\n",raw,cia);
+    ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
+}
+static bool hle_host_call(CPUState* cpu, uint32_t addr){
+    (void)cpu;(void)addr;
+    // No SDK patch yet — let dolrecomp_call_original handle it
+    return false;
+}
 
 static int load_dol(const char* path, CPUState* cpu) {
     FILE* f = fopen(path, "rb");
@@ -59,7 +90,12 @@ static int load_dol(const char* path, CPUState* cpu) {
 int recomp_init(const char* dol_path) {
     if(g_inited) return 1;
     if(!cpu_init(&g_cpu)){ fprintf(stderr,"[recomp] cpu_init fail\n"); return 0; }
-    // timebase from QPC-ish: 1/3 CPU clock ~ 486MHz/4?
+    g_cpu.external_read = hle_external_read;
+    g_cpu.external_write = hle_external_write;
+    g_cpu.external_read32 = hle_external_read32;
+    g_cpu.external_write32 = hle_external_write32;
+    g_cpu.instruction_fallback = hle_fallback;
+    g_cpu.host_call = hle_host_call;
     g_cpu.timebase = 0;
     if(!load_dol(dol_path, &g_cpu)){ cpu_free(&g_cpu); return 0; }
     g_inited = 1;
@@ -68,14 +104,23 @@ int recomp_init(const char* dol_path) {
 void recomp_shutdown(void){ if(g_inited){ cpu_free(&g_cpu); g_inited=0; } }
 void recomp_run_slice(void){
     if(!g_inited) return;
-    g_cpu.timebase += 486000000ULL/240; // ~60Hz slice
-    // run up to 4096 blocks; bail on exception/host trap
+    g_cpu.timebase += 486000000ULL/240;
+    // simple DEC handling so guest OS tick doesn't spin forever
     for(int i=0;i<4096;i++){
-        if(g_cpu.exception) break;
-        if(!dolrecomp_call(&g_cpu, g_cpu.pc)) break;
-        if(g_cpu.exception) break;
+        if(g_cpu.exception){
+            if(g_cpu.pc!=s_last_exc_pc || g_cpu.exception!=s_last_exc){
+                fprintf(stderr,"[hle] exception 0x%X pc=0x%08X -> vec 0x%08X\n", g_cpu.exception, s_last_exc_pc, g_cpu.pc);
+                s_last_exc_pc=g_cpu.pc; s_last_exc=g_cpu.exception;
+            }
+            // clear and keep ticking — lets us see if guest recovers or loops on same vector
+            g_cpu.exception=0;
+        }
+        uint32_t pc=g_cpu.pc;
+        if(!dolrecomp_call(&g_cpu, pc)){
+            if(g_cpu.exception==0) fprintf(stderr,"[hle] dolrecomp_call miss pc=0x%08X\n",pc);
+            break;
+        }
     }
-    // keep pc alive even on exception for HUD
 }
 unsigned recomp_pc(void){ return g_cpu.pc; }
 int recomp_inited(void){ return g_inited; }
