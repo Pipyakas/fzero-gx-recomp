@@ -50,10 +50,23 @@ if(NOT FZERO_HOST_GX_NULL)
     endif()
 endif()
 
+file(GLOB RECOMP_DOL_CHUNKS "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp_all/generated/dol/generated/chunks/*.c")
+
+add_library(recomp_core STATIC
+    src/recomp_runner.c
+    ../vendor/RingOut/DolRecomp/src/cpu/cpu.c
+    ${RECOMP_DOL_CHUNKS}
+)
+target_include_directories(recomp_core PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/RingOut/DolRecomp/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp_all/generated/dol/generated"
+)
+target_compile_definitions(recomp_core PRIVATE _CRT_SECURE_NO_WARNINGS)
+
 add_executable(fzero-gx WIN32
     src/main_host.c
 )
-target_link_libraries(fzero-gx PRIVATE fzero_host_shims)
+target_link_libraries(fzero-gx PRIVATE fzero_host_shims recomp_core)
 if(WIN32)
   target_compile_definitions(fzero-gx PRIVATE _WIN32 HOST_BUILD=1)
 endif()

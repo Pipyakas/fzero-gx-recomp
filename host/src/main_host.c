@@ -1,5 +1,6 @@
 // host/src/main_host.c — Windows host entry with Vulkan WSI.
 #include <stdio.h>
+#include "../recomp_runner.h"
 #ifdef _WIN32
 #include <windows.h>
 
@@ -49,6 +50,10 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, PWSTR cmd, int show) {
     if(g_vk==0) g_vk=1; else if(g_vk!=0) g_vk=-1;
 #endif
     printf("RVZ: orig/GFZE01/f-zero gx (usa).rvz + 14 RELs\n");
+    // init CPU + load DOL into RAM
+    const char* dol_candidates[] = {"orig/GFZE01/sys/main.dol","C:/code/fzero-gx-recomp/orig/GFZE01/sys/main.dol","../../../orig/GFZE01/sys/main.dol",NULL};
+    int ok=0; for(int i=0;dol_candidates[i];i++) if(recomp_init(dol_candidates[i])){ok=1;break;}
+    printf("[recomp] %s pc=0x%08X\n", ok?"ready":"DOL load FAILED", recomp_pc());
 
     WNDCLASSW wc={0}; wc.lpfnWndProc=WndProc; wc.hInstance=hi; wc.lpszClassName=kClass;
     wc.hCursor=LoadCursor(NULL,IDC_ARROW); wc.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);
@@ -66,19 +71,21 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, PWSTR cmd, int show) {
     printf("Window 960x540 — close to exit. WSI=%s\n", g_vk==1?"Vulkan":"GDI");
 
     // Frame loop: PeekMessage so we can present at ~60Hz even without WM_PAINT.
-    MSG msg;
+    MSG msg; DWORD lastTitle=0;
     while(1){
         while(PeekMessageW(&msg,NULL,0,0,PM_REMOVE)){
             if(msg.message==WM_QUIT) goto done;
             TranslateMessage(&msg); DispatchMessageW(&msg);
         }
+        if(recomp_inited()) recomp_run_slice();
+        if(GetTickCount()-lastTitle>500){ lastTitle=GetTickCount(); wchar_t t[128]; swprintf(t,128,L"F-Zero GX — Host pc=0x%08X", recomp_pc()); SetWindowTextW(w,t); }
 #ifndef HOST_GX_NULL
         if(g_vk==1) gx_vulkan_draw_frame();
 #endif
-        // ~60 fps cap to avoid busy spin; present will also throttle via FIFO.
-        Sleep(16);
+        Sleep(8);
     }
 done:
+    recomp_shutdown();
 #ifndef HOST_GX_NULL
     gx_vulkan_shutdown();
 #endif
