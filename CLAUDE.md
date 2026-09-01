@@ -1,38 +1,35 @@
-# fzero-gx-recomp — readable recomp (no DOL SHA constraint)
+# fzero-gx-recomp � static recomp (GFZE01)
 
-`main` is the recomp branch (readable, playable Windows+Android). No DOL SHA constraint — readable recomp, not matching decomp. Reference: `karamzov123/fzero-gx-decomp` kept as reference only (no `upstream` remote; `git remote add tmp ...` to cherry-pick).
+Fresh root. Prior matching-decomp history at pre-recomp archive; `main` is the only branch.
 
-## Branches
+## Toolchain (Windows native only)
 
-- `main` — recomp: readable `OSThread/GX` structs, `REL` loader, `host/` SDL2+Vulkan Android (crDroid 15 beryllium `SD845 Adreno630 vk1.1 1080x2246` via `adb d1cadee8` at D1) + Windows, `C:\Steam\userdata\*/shortcuts.vdf` non-Steam via `host/add_steam_shortcut.py`. From `dev a52cc0b` (92.49%, 150 left) then diverged.
+- VS 2022 `vcvars64.bat -arch=x64` + Ninja + VS LLVM `clang 19.1.5` (`.../VC/Tools/Llvm/x64/bin/clang.exe`)
+- Vulkan SDK 1.4.350 (`C:/VulkanSDK/1.4.350.0`), `vulkan-1.lib`, `VK_USE_PLATFORM_WIN32_KHR`
+- No WSL/Cygwin. All targets build with native Windows toolchain.
 
-Location: `C:\code\fzero-gx-recomp` on D1 `100.104.216.83` (renamed from `fzero-gx-decomp`). Fork: `Pipyakas/fzero-gx-recomp` (renamed from `fzero-gx-decomp` via `gh repo rename`). `origin` now `git@github.com:Pipyakas/fzero-gx-recomp.git`.
-
-## Work on `main` (recomp)
-
-- No DOL SHA constraint — `build/GFZE01/main.dol: OK` not required (readable recomp).
-- `orig/GFZE01/f-zero gx (usa).rvz` 1.2 GiB → `orig/GFZE01/files` 14 RELs `fze.*.rel` 2.45 MB already extracted; `src/rel/*.c` 14 stubs.
-- `host/` is playable: `host/src/main_host.c` `WndProc` 960x540 GX-blue + `host/src/gx_null.c` (replace with `gx_vulkan.c`) + SDL2 → `cmake -S host -B build/host --config Release` → `build/host/Release/fzero-gx.exe` (13312 B stub, now `C:\Steam` non-Steam).
-- Recomp approach: use `gcrecomp` pattern (GC Gekko→C, N64Recomp-style, see https://github.com/sp00nznet/gcrecomp) or manual readable translation of `src/dolphin/*` + game `REL` code. Other efforts: `gcrecomp` toolkit itself (generic GC static recompilation to C→native x86-64, GX→D3D11+TEV/DSP/IR, OS HLE), no F-Zero GX–specific recomp found yet — we are not blocked by one.
-
-## Other recomps (searched 2026-09-01)
-
-- `sp00nznet/gcrecomp` — GC static recomp toolkit (generic, not F-Zero GX specific). Pipeline: DOL/REL → C → native runtime (CPU ctx/mem, GX→D3D11, DSP→ADPCM, Dolphin OS HLE). No F-Zero GX named.
-- `N64Recomp/N64Recomp` — N64 original (inspired gcrecomp).
-- No dedicated `fzero-gx-recomp` project found — we are effectively greenfield.
-
-## Live reporting
-
-Every `ScheduleWakeup 600s` (`continously monitor … report here realtime`): HAPPENING / DONE / NEXT 10-30m / TOTAL (not applicable — readable, not matched%) / CURRENT target (file/mode). Even if blocked, state blocker.
-
-## Commands
+## Build
 
 ```
-git checkout main
-# karamzov123/fzero-gx-decomp is reference only (no upstream remote)
-# to cherry-pick: git remote add tmp https://github.com/karamzov123/fzero-gx-decomp.git && git fetch tmp
-python host/add_steam_shortcut.py  # after each host build
-cmake -S host -B build/host && cmake --build build/host --config Release
-build\host\Release\fzero-gx.exe
-adb -s d1cadee8 shell getprop ro.crdroid.version  # Poco F1 crDroid 15
+call "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvars64.bat"
+cmake -S vendor/RingOut/DolRecomp -B build/dolrecomp -G Ninja -DCMAKE_C_COMPILER="C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/x64/bin/clang.exe"
+cmake --build build/dolrecomp --target dolrecomp -j16
+build/dolrecomp/dolrecomp --gamecube orig/GFZE01/sys/main.dol build/recomp_gen -j16
+
+cmake -S host -B build/host --config Release
+cmake --build build/host --config Release -j16
+build/host/Release/fzero-gx.exe   # Vulkan WSI, 960x540 GX-blue
 ```
+
+`orig/GFZE01/f-zero gx (usa).rvz` (1.2 GiB) is user-supplied, gitignored. Extract to `orig/GFZE01/sys/main.dol` + `orig/GFZE01/files/files/fze.*.rel` (14 RELs).
+
+## Layout
+
+- `host/` � Win32 host (`main_host.c` WndProc, `gx_vulkan.c` Vulkan WSI, `dvd_host.c` DVD->FS, `os_win32.c` QPC)
+- `vendor/RingOut/` � submodule `jackpoison-prog/RingOut` (DolRecomp + ModernGekko), patched for Windows (S_ISDIR, fseeki64, dirent->Win32, pthread->CRITICAL_SECTION)
+- `android/` � Android target (targetSdk35, crDroid 15 beryllium SD845)
+- `build/`, `orig/` � gitignored
+
+## Recomp flow
+
+DOL/REL -> DolRecomp --gamecube -> C chunks -> compile with ModernGekko runtime (CPU ctx, GX->Vulkan, OS HLE) -> fzero-gx.exe

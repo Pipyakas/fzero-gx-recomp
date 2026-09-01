@@ -1,45 +1,39 @@
-# IDE folders
-.idea/
-.vs/
-
-# Caches
-__pycache__
-.mypy_cache
-.cache/
-
-# Original files
-orig/*/*
-!orig/*/.gitkeep
-*.dol
-*.rel
-*.elf
-*.o
-*.map
-*.MAP
-
-# Build files
+# Build
 build/
 .ninja_*
 build.ninja
-
-# decompctx output
+compile_commands.json
+objdiff.json
 ctx.*
 *.ctx
 
-# Generated configs
-objdiff.json
-compile_commands.json
+# Original disc (user-supplied, not redistributed)
+orig/
 
-# Miscellaneous
-/*.txt
+# Binaries
+*.o
+*.obj
+*.lib
+*.a
+*.so
+*.dll
 *.exe
-.worktrees/
-natc_runs.sqlite
-.natc-submissions/
+*.pdb
+*.ilk
 
-# Runtime-generated helper (written into tools/ by emit_m2c_asm.py / natc_loop.py)
-tools/words.py
-tools/__pycache__/
+# IDE
+.idea/
+.vs/
+.vscode/.ropeproject
+*.code-workspace
 
-# Build depfiles that land in the repo root
+# Caches
+__pycache__/
+.mypy_cache/
+.cache/
 *.d
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db
