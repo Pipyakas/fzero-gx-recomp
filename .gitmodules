@@ -1,0 +1,3 @@
+[submodule "vendor/RingOut"]
+	path = vendor/RingOut
+	url = https://github.com/jackpoison-prog/RingOut.git
