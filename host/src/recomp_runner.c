@@ -142,6 +142,34 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
        && cmd->dma && !cmd->write && cmd->dma_length){
         u32 disc_off = cmd->command[1] << 2;
         { static int _n=0; if(_n<6){ fprintf(stderr,"[di] exec read c0=0x%08X off=0x%08X len=%u -> guest 0x%08X\n", c0, disc_off, cmd->dma_length, cmd->dma_address); _n++; } }
+        // Backing store: extracted tree via FST offset map (dvd_host.c).
+        // dvd.c's ISO handle is empty (no plain ISO — only .rvz + tree),
+        // so route through the tree mapper; fall back to dvd.c if an image
+        // ever opens (it zero-fills past EOF the same way).
+        extern unsigned dvd_read_disc_bytes(const uint8_t* fst, unsigned fst_size, unsigned disc_off, uint8_t* dst, unsigned len);
+        uint32_t base = 0x81200000u;
+        if(base >= GC_RAM_BASE && base < GC_RAM_BASE + cmd->cpu->ram_size){
+            uint8_t* f = cmd->cpu->ram + (base - GC_RAM_BASE);
+            unsigned n = ((unsigned)f[8]<<24)|((unsigned)f[9]<<16)|((unsigned)f[10]<<8)|f[11];
+            unsigned fsz = n*12u;
+            // string table extent unknown here; pass a large cap — the
+            // mapper bounds-checks n*12 against it and names against NULs.
+            // fst.bin is 129405B; cap at 1MB.
+            if(fsz < 1024*1024){
+                uint32_t ga = cmd->dma_address;
+                u8* dst = NULL;
+                if(ga >= GC_RAM_BASE && ga + cmd->dma_length <= GC_RAM_BASE + cmd->cpu->ram_size)
+                    dst = cmd->cpu->ram + (ga - GC_RAM_BASE);
+                else if(ga >= GC_RAM_UNCACHED && ga + cmd->dma_length <= GC_RAM_UNCACHED + cmd->cpu->ram_size)
+                    dst = cmd->cpu->ram + (ga - GC_RAM_UNCACHED);
+                if(dst){
+                    unsigned got = dvd_read_disc_bytes(f, 1024*1024, disc_off, dst, cmd->dma_length);
+                    if(got < cmd->dma_length) memset(dst+got, 0, cmd->dma_length-got);
+                    { static int _n=0; if(_n<4){ fprintf(stderr,"[di] tree read off=0x%08X got=%u/%u\n", disc_off, got, cmd->dma_length); _n++; } }
+                    return DOL_DI_COMMAND_COMPLETE;
+                }
+            }
+        }
         dvd_read_to_guest(cmd->cpu, cmd->dma_address, disc_off, cmd->dma_length);
         return DOL_DI_COMMAND_COMPLETE;
     }
