@@ -796,11 +796,12 @@ void recomp_run_slice(void){
           static unsigned _ls=0; _ls++;
           if(_ls==1||_ls%20000000==0){ uint32_t head=0;
             guest_read32(g_cpu.gpr[13]-31800u, &head);
-            fprintf(stderr,"[park] listshape head=0x%08X r13=0x%08X:", head, g_cpu.gpr[13]);
+            fprintf(stderr,"[park] listshape head=0x%08X r13=0x%08X tb=0x%llX:", head, g_cpu.gpr[13], (unsigned long long)g_cpu.timebase);
             uint32_t cur=head;
             for(int h=0;h<8&&cur;h++){ uint32_t k8=0,k12=0,nx=0;
               guest_read32(cur+8u,&k8); guest_read32(cur+12u,&k12); guest_read32(cur+20u,&nx);
               fprintf(stderr," [0x%08X k=%08X:%08X nx=0x%08X]", cur, k8, k12, nx);
+              if(nx==cur){ fprintf(stderr," SELF"); break; }
               if(nx==head){ fprintf(stderr," CIRCULAR"); break; }
               cur=nx; }
             fprintf(stderr," (#%u)\n", _ls); } }
