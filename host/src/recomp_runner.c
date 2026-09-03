@@ -253,6 +253,9 @@ static void chassis_init(void){
     dol_interrupts_init(&s_interrupts);
     dol_vi_clock_init(&s_vi_clock);
     dol_vi_clock_configure(&s_vi_clock, 1u, 60u, GC_TIMEBASE_HZ);
+    // fzAV result: timebase seed REFUTED (node8 went 0->1 = wall-clock
+    // read working, but park persists). Seed reverted to 0 to keep M0
+    // determinism (retrace-driven only).
     dol_di_init(&s_di);
     dol_di_set_command_callback(&s_di, chassis_di_execute, NULL);
     // Route VI (0xCC002000 len 0x80) + PI (0xCC003000 len 0x40) + PE status
@@ -722,20 +725,74 @@ void recomp_run_slice(void){
         // exit at AD38->ADD8). Dump r6 node ptr, node[8], node[12], and CR —
         // read-only. If r6/node words never change, the list is circular or
         // its successor is never written (missing DMA? missing callback?).
+        // AC44-inner watcher (fzAS): ring showed the node+20 write happens
+        // with pc-path AECC->AC44->AD1C->AEE0, i.e. INSIDE the AC44 allocator
+        // (AD04 stw r31,0(r29) / AD0C stw r30,12(r29) / AD10 stw r25,8(r29)
+        // publish block). Log regs at AC44 entry + the publish values, so we
+        // learn what key the node is filed under (r30/r25 vs node12 drift).
+        if(pc==0x8000AC44u){
+          static unsigned _v=0; _v++;
+          if(_v<=4){ uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
+            fprintf(stderr,"[watch] AC44 req r3=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X node12=0x%08X lr=0x%08X (#%u)\n",
+              g_cpu.gpr[3], g_cpu.gpr[5], g_cpu.gpr[6], g_cpu.gpr[7], n12, g_cpu.lr, _v); } }
         if(pc==0x8000AD1Cu){
           static unsigned _p=0; _p++;
-          if(_p<=6||_p%20000000==0){ uint32_t w8=0xDEADu,w12=0xDEADu;
-            guest_read32(g_cpu.gpr[6]+8u, &w8); guest_read32(g_cpu.gpr[6]+12u, &w12);
-            fprintf(stderr,"[park] AD1C r6=0x%08X node8=0x%08X node12=0x%08X r30=0x%08X cr=0x%08X lr=0x%08X (#%u)\n",
-              g_cpu.gpr[6], w8, w12, g_cpu.gpr[30], g_cpu.cr, g_cpu.lr, _p); } }
-        // ADD8 = list-advance (r6 = r6->next@+20). If the walk ever advances,
-        // this fires; if the list is circular it fires forever on the same
-        // 2-3 nodes. Dumps the node chain (3 hops) read-only.
-        if(pc==0x8000ADD8u){
-          static unsigned _q=0; _q++;
-          if(_q<=4||_q%5000000==0){ uint32_t n0=g_cpu.gpr[6],n1=0,n2=0,n3=0;
-            guest_read32(n0+20u, &n1); if(n1) guest_read32(n1+20u, &n2); if(n2) guest_read32(n2+20u, &n3);
-            fprintf(stderr,"[park] ADD8 chain 0x%08X -> 0x%08X -> 0x%08X -> 0x%08X (#%u)\n", n0, n1, n2, n3, _q); } }
+          if(_p<=6||_p%20000000==0){ uint32_t w8=0xDEADu,w12=0xDEADu,w20=0xDEADu;
+            guest_read32(g_cpu.gpr[6]+8u, &w8); guest_read32(g_cpu.gpr[6]+12u, &w12); guest_read32(g_cpu.gpr[6]+20u, &w20);
+            // Emulate AD24-AD38 128-bit compare (r0=node8 @AD1C, r5=node12
+            // @AD20): lo=r30-w12, hi=r4-(r0^0x80000000), borrow-chained;
+            // neg. sets EQ iff hi:lo==0 -> ADD8 advance, else ADE4 insert.
+            uint32_t r3h = w8 ^ 0x80000000u, r4 = g_cpu.gpr[4], r30 = g_cpu.gpr[30];
+            uint64_t lo = (uint64_t)r30 + (uint64_t)(~w12) + 1u; uint32_t ca = (uint32_t)(lo>>32);
+            uint64_t hi = (uint64_t)r4 + (uint64_t)(~r3h) + ca;
+            uint32_t borrow = ca ? 0u : 1u; // subfe carry semantics: CA=0 => borrow
+            uint32_t hirem = (uint32_t)hi + borrow; // subfe r3,r4,r4 + borrow
+            int toADD8 = (hirem==0 && (uint32_t)lo==0);
+            fprintf(stderr,"[park] AD1C r6=0x%08X node8=0x%08X node12=0x%08X next20=0x%08X r30=0x%08X r4=0x%08X cmp=%s lr=0x%08X (#%u)\n",
+              g_cpu.gpr[6], w8, w12, w20, r30, r4, toADD8?"ADD8":"ADE4", g_cpu.lr, _p); }
+          // One-shot collision check: heap head (-31800(r13)) vs our thread.
+          { static int _c=0; if(!_c){ _c=1;
+            uint32_t head=0,alo=0,ahi=0,e4=0; int i;
+            guest_read32(g_cpu.gpr[13]-31800u, &head);
+            guest_read32(0x80000030u, &alo); guest_read32(0x80000034u, &ahi);
+            guest_read32(0x800000E4u, &e4);
+            fprintf(stderr,"[park] heap head=0x%08X r13=0x%08X arena_lo=0x%08X arena_hi=0x%08X E4(thread)=0x%08X r6=0x%08X\n",
+              head, g_cpu.gpr[13], alo, ahi, e4, g_cpu.gpr[6]);
+            fprintf(stderr,"[park] r6-32..+48:");
+            for(i=-32;i<48;i+=4){ uint32_t w=0xDEADu; guest_read32(g_cpu.gpr[6]+(uint32_t)i, &w); fprintf(stderr," %08X", w); }
+            fprintf(stderr,"\n"); } } }
+        // List-shape dump (fzAT): follow next@+20 up to 8 hops from the head
+        // with each node's key words (+8/+12). Circular? Linear? How long?
+        // One-shot + repeat every 20M AD1C hits (list may evolve).
+        if(pc==0x8000AD1Cu){
+          static unsigned _ls=0; _ls++;
+          if(_ls==1||_ls%20000000==0){ uint32_t head=0;
+            guest_read32(g_cpu.gpr[13]-31800u, &head);
+            fprintf(stderr,"[park] listshape head=0x%08X r13=0x%08X:", head, g_cpu.gpr[13]);
+            uint32_t cur=head;
+            for(int h=0;h<8&&cur;h++){ uint32_t k8=0,k12=0,nx=0;
+              guest_read32(cur+8u,&k8); guest_read32(cur+12u,&k12); guest_read32(cur+20u,&nx);
+              fprintf(stderr," [0x%08X k=%08X:%08X nx=0x%08X]", cur, k8, k12, nx);
+              if(nx==head){ fprintf(stderr," CIRCULAR"); break; }
+              cur=nx; }
+            fprintf(stderr," (#%u)\n", _ls); } }
+        // AD38 = 128-bit compare exit (neg. result -> ADD8 advance vs ADE4
+        // insert). Never dispatched (same-chunk goto) so count it via the
+        // AD1C-hit parity: AD1C fires every loop iteration; ADD8 fires only
+        // on advance. Ratio tells whether the compare always fails.
+        if(pc==0x8000ADE4u||pc==0x8000AD60u||pc==0x8000AE80u){
+          static unsigned _e1=0,_e2=0,_e3=0; unsigned *c = pc==0x8000ADE4u?&_e1:pc==0x8000AD60u?&_e2:&_e3; (*c)++;
+          if(*c<=3) fprintf(stderr,"[park] %s hit (#%u)\n", pc==0x8000ADE4u?"ADE4(insert-exit)":pc==0x8000AD60u?"AD60(publish)":"AE80(return)", *c); }
+        // 1142C/1140C = sync primitives called INSIDE the park path (fzAN:
+        // node12's first write happens with pc=1142C). Dispatched (chunk_3
+        // entries). Dump regs + node12 at each hit — which call in the park
+        // sequence writes node12, and with what value?
+        if(pc==0x8001142Cu||pc==0x8001140Cu||pc==0x8001146Cu){
+          static unsigned _s=0; _s++;
+          if(_s<=12){ uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
+            fprintf(stderr,"[park] %s r3=0x%08X r4=0x%08X r27=0x%08X r29=0x%08X r30=0x%08X r31=0x%08X node12=0x%08X lr=0x%08X (#%u)\n",
+              pc==0x8001142Cu?"1142C":pc==0x8001140Cu?"1140C":"1146C",
+              g_cpu.gpr[3], g_cpu.gpr[4], g_cpu.gpr[27], g_cpu.gpr[29], g_cpu.gpr[30], g_cpu.gpr[31], n12, g_cpu.lr, _s); } }
         // 14168/1416C/14170/1417C = upper-layer flag check (0x800030CE==0x8200?).
         // 14170 never dispatched in prior runs — read-only dump of the flag +
         // block word0 to learn which side the branch takes.
