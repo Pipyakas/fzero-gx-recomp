@@ -155,32 +155,25 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
             memset(d+8, 0, 24);
         }
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec INQUIRY -> guest 0x%08X\n", cmd->dma_address); _n++; } }
-        // Completion signal: the 15FC0/16018 waiter polls DI status itself
-        // (0xCC006000) and invokes the stored callback via its own blrl at
-        // 16270 with r3=r29. The old code ALSO dispatched 0x80018D1C through
-        // the HLE trampoline => double invocation per command => the
-        // inq/stop retry loop (2000 cmds, 0 reads). Now just raise the flag
-        // the waiter checks (r13-31592=1, set at 16018->ori r29,8), the way
-        // the parked DI-interrupt handler would have. TCINT is already set
-        // by dol_di_complete_command via the COMPLETE return below.
-        { u32 fa = cmd->cpu->gpr[13] - 31592u;
-          if(fa >= GC_RAM_BASE && fa + 4u > fa && fa + 4u <= GC_RAM_BASE + cmd->cpu->ram_size){
-            uint8_t* p = cmd->cpu->ram + (fa - GC_RAM_BASE);
-            p[0]=0; p[1]=0; p[2]=0; p[3]=1;
-            { static int _m=0; if(_m<3){ fprintf(stderr,"[di] INQUIRY flag r13-31592=1 (r13=0x%08X)\n", cmd->cpu->gpr[13]); _m++; } }
-          } }
+        // EXP fzV: drop the r13-31592=1 flag raise. Rationale: it fires on
+        // EVERY command (stale r13 under the trampoline's saved context),
+        // so it can short-circuit the 15FC0 waiter before the callback runs.
+        // Keep only block-state=END + the slot callback below.
         // SDK completion: DVDLowCallback(result, block). HLE poll sets
         // gpr3=channel, gpr4=result, so queue channel=0 (result OK) and
         // result=block pointer. Block addr from r13-31488 current-block
         // global (0x8015BF20 per 16A38 probe). r3=0 takes the 18D68
         // success path (18D20 early-out is only for r3==0x10 error).
-        { uint32_t block = 0x8015BF20u, cb = 0x80018D1Cu;
+        // Dispatch the LOW-LEVEL callback 18D1C (16A38's r4), NOT the
+        // block+40 slot (A374). 18D1C does drive-state bookkeeping
+        // (-31456/-31448/-31436, 187CC chain) then invokes the slot itself
+        // via its native blrl (18F2C: r3=0, r4=block). Dispatching A374
+        // directly skips that bookkeeping => inquiry retried forever
+        // (fzS-fzY: inq=100%, tag=14 always). r3=0 (OK), r4=block.
+        { uint32_t block = 0x8015BF20u;
           guest_read32(cmd->cpu->gpr[13]-31488u, &block);
           if(block < GC_RAM_BASE) block = 0x8015BF20u;
-          guest_read32(block+40u, &cb);
-          // HLE poll sets gpr3=channel, gpr4=result: channel=0 (OK),
-          // result=block. Fall back to 18D1C (16A38's r4 per probe).
-          if(cb < GC_RAM_BASE && cb != 0) cb = 0x80018D1Cu;
+          uint32_t cb = 0x80018D1Cu;
           // Mark the block complete the way the SDK's ISR would: state
           // (offset 0x0C, == DVD_CB_STATE per hle_dvd.c) = END(0), transferred
           // lengths at 0x1C/0x20. A374 checks block+12==0 for success; without
@@ -206,14 +199,13 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
     // advances instead of retrying down an error path.
     if((c0 & 0xFF000000u) == 0xE3000000u){
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec STOPMOTOR (complete)\n"); _n++; } }
-        // Same completion contract as inquiry: invoke the block's stored
-        // callback (+40 slot, blrl target per 18848-1885C pattern) with
-        // (result=0, block). Without it the stop waiter never advances and
-        // the machine falls back to re-issuing inquiry.
-        { u32 blk=0, cb=0; guest_read32(cmd->cpu->gpr[13]-31488u, &blk);
-          if(blk) guest_read32(blk+40u, &cb);
-          if(cb){ static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR cb=0x%08X blk=0x%08X\n", cb, blk); _m++; }
-            dol_hle_queue_guest_callback(cb, 0, blk); } }
+        // Same contract as inquiry: dispatch the LOW-LEVEL callback 18D1C
+        // (r3=0, r4=block) so it does drive-state bookkeeping, then invokes
+        // the slot itself. Direct slot dispatch skips bookkeeping (fzAA).
+        { uint32_t blk=0x8015BF20u; guest_read32(cmd->cpu->gpr[13]-31488u, &blk);
+          if(blk < GC_RAM_BASE) blk = 0x8015BF20u;
+          { static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR blk=0x%08X -> 18D1C\n", blk); _m++; } }
+          dol_hle_queue_guest_callback(0x80018D1Cu, 0, blk); }
         return DOL_DI_COMMAND_COMPLETE;
     }
     if((c0 & 0xFF000000u) == 0xA8000000u
@@ -667,7 +659,8 @@ void recomp_run_slice(void){
         else if(pc==0x800858E4u) g_cpu.gpr[3]=1;
         else if(pc==0x800333C8u) g_cpu.gpr[11]=0;
         else if(pc==0x8000A990u) g_cpu.gpr[26]=16;
-        else if(pc==0x80010718u) poke32_set(g_cpu.gpr[13]-31688u, 1u);
+        // (was: 0x80010718 poke r13-31688=1 — removed. 10718/1071C is a
+        // spin-wait on that flag; forcing it defeats the wait it guards.)
         else if(pc==0x80010624u && g_cpu.gpr[6]==0) g_cpu.gpr[6]=1;
         // (was: 0x8000BE60 spoofed low-mem 0xD4=0x80003000 — removed.
         // BE5C/BE60 reads the OS global at 0x800000D4, owned by the guest;
@@ -694,6 +687,19 @@ void recomp_run_slice(void){
         if(pc==0x80016018u){ static int _n=0; if(_n<8){ _n++;
             u32 fl=0; guest_read32(g_cpu.gpr[13]-31592u, &fl);
             fprintf(stderr,"[dvdsm] 16018 flag-31592=%u DIstatus=0x%08X lr=0x%08X\n", fl, s_di.status, g_cpu.lr); } }
+        // 19690 = parent that calls 19700->187CC sink (dispatch chain
+        // 19690->19700->187CC->19FA4?->...->189FC->18CC8->16A38). Read-only:
+        // dump block[8] (tag), block[12] (state), r13 vars, and lr.
+        if(pc==0x80019690u||pc==0x80019700u||pc==0x800187CCu){
+          static unsigned _w1=0,_w2=0,_w3=0;
+          unsigned *c = pc==0x80019690u?&_w1:pc==0x80019700u?&_w2:&_w3; (*c)++;
+          if(*c<=4){ u32 tag=0xDEADu,st=0xDEADu,s48=0,s60=0,cb=0;
+            guest_read32(0x8015BF20u+8u, &tag); guest_read32(0x8015BF20u+12u, &st);
+            guest_read32(g_cpu.gpr[13]-31568u, &s48); guest_read32(g_cpu.gpr[13]-31460u, &s60); guest_read32(g_cpu.gpr[13]-31488u, &cb);
+            fprintf(stderr,"[dvdsm] %s r3=0x%08X r31=0x%08X tag=%u st=%u s48=%u drv=%u curblk=0x%08X lr=0x%08X (#%u)\n",
+              pc==0x80019690u?"19690":pc==0x80019700u?"19700":"187CC",
+              g_cpu.gpr[3], g_cpu.gpr[31], tag, st, s48, s60, cb, g_cpu.lr, *c); }
+          if((*c%20000)==0) fprintf(stderr,"[dvdsm] sinkchain 19690=%u 19700=%u 187CC=%u\n", _w1,_w2,_w3); }
         // 18F38 = result-bit branch; 18E68 = drive-state branch; 1920C = alt path.
         // Uncapped counters + first-few dumps: which callback path executes?
         if(pc==0x80018F38u||pc==0x80018E68u||pc==0x8001920Cu||pc==0x80018DB0u||pc==0x80018D1Cu||pc==0x80018CC8u||pc==0x80018D68u){
@@ -714,6 +720,19 @@ void recomp_run_slice(void){
           if(_a1<=3||_a1%4000==0){ uint32_t st=0xDEADu; guest_read32(g_cpu.gpr[4]+12u, &st);
             fprintf(stderr,"[dvdsm] A374 r3=0x%08X blk=0x%08X blk+12=%u lr=0x%08X (#%u)\n",
               g_cpu.gpr[3], g_cpu.gpr[4], st, g_cpu.lr, _a1); } }
+        // 14168/1416C/14170/1417C = upper-layer flag check (0x800030CE==0x8200?).
+        // 14170 never dispatched in prior runs — read-only dump of the flag +
+        // block word0 to learn which side the branch takes.
+        if(pc==0x80014168u||pc==0x8001416Cu||pc==0x80014170u||pc==0x8001417Cu||pc==0x80014180u){
+          static unsigned _f1=0,_f2=0,_f3=0,_f4=0,_f5=0;
+          unsigned *c = pc==0x80014168u?&_f1:pc==0x8001416Cu?&_f2:pc==0x80014170u?&_f3:pc==0x8001417Cu?&_f4:&_f5; (*c)++;
+          if(*c<=3){ uint32_t fl=0xDEADu, w0=0xDEADu; guest_read32(0x800030CEu-1u+1u, &fl); guest_read32(0x8015BF20u, &w0);
+            // flag is a halfword at 0x800030CE; read enclosing word aligned
+            uint32_t alg=0; guest_read32(0x800030CCu, &alg);
+            fprintf(stderr,"[dvdsm] %s r0=0x%08X r3=0x%08X r4=0x%08X flag30CC=0x%08X blk0=0x%08X (#%u)\n",
+              pc==0x80014168u?"14168":pc==0x8001416Cu?"1416C":pc==0x80014170u?"14170":pc==0x8001417Cu?"1417C":"14180",
+              g_cpu.gpr[0], g_cpu.gpr[3], g_cpu.gpr[4], alg, w0, *c); }
+          if((*c%20000)==0) fprintf(stderr,"[dvdsm] flagcheck 14168=%u 1416C=%u 14170=%u 1417C=%u 14180=%u\n", _f1,_f2,_f3,_f4,_f5); }
 
         else if(pc==0x8001AF8Cu){ uint32_t v=g_cpu.gpr[30]; if(v==0) v=1; poke32_set(g_cpu.gpr[13]-31388u, v); }
         // GXRuntime VI retrace drive: 1 block dispatch = 1 work unit.
@@ -737,16 +756,28 @@ void recomp_run_slice(void){
         if(pc == HLE_CALLBACK_RETURN){
             if(dol_hle_handle_callback_return(&g_cpu, pc)) continue;
         }
-        if(dol_hle_poll_callback(&g_cpu)) continue;
+        // HLE callback trampoline (fzAD finding): the queued guest callback
+        // runs to completion INLINE here — the chunk executes 18D1C fully
+        // (downcount-driven return runs the whole native chain including
+        // 18D68/18DB0 interior labels). `continue` then resumes the SAVED
+        // context after the callback already ran; the next-iteration pc IS
+        // the callback only for poll()'s bookkeeping, not for execution.
+        // (The old code was correct all along; interior labels never
+        // dispatch by design — no bug here.)
+        if(dol_hle_poll_callback(&g_cpu)){
+          uint32_t cbpc = g_cpu.pc;
+          { static unsigned _t=0; if(++_t<=2) fprintf(stderr,"[cb] trampoline cb=0x%08X from pc=0x%08X\n", cbpc, pc); }
+          dolrecomp_call(&g_cpu, cbpc);
+          continue; }
         // First-dispatch trace: log each never-before-dispatched pc once.
         // Ring of last 64 + ever-total: early boot saturates any first-N
         // cap (384 unique in minutes), so keep a sliding window over the
         // frontier instead. GX-family entry is the M3 signal.
         { static uint32_t _seen[2048]; static int _nseen=0; static int _logged=0;
-          int _f=0; for(int _i=0;_i<_nseen;_i++) if(_seen[_i]==pc){ _f=1; break; }
+          int _f=0; for(int _i=0;_i<_nseen && _i<2048;_i++) if(_seen[_i]==pc){ _f=1; break; }
           if(!_f){ if(_nseen<2048) _seen[_nseen++]=pc;
-            if(_logged<384 || (_nseen % 16)==0){ _logged++;
-              fprintf(stderr,"[new] pc=0x%08X lr=0x%08X (uniq=%d logged=%d)\n", pc, g_cpu.lr, _nseen, _logged); } } }
+            if((_nseen%16)==1){
+              fprintf(stderr,"[new] pc=0x%08X lr=0x%08X (uniq=%d)\n", pc, g_cpu.lr, _nseen); } } }
         if(!dolrecomp_call(&g_cpu, pc)){
             if(g_cpu.exception==0){
                 static int miss_cnt=0;
