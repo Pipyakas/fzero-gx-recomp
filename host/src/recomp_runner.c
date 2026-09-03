@@ -447,6 +447,19 @@ static void hle_fallback(CPUState* cpu, uint32_t raw, uint32_t cia){
     ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
 }
 static bool hle_host_call(CPUState* cpu, uint32_t addr){
+    // host_call runs inside dolrecomp_call BEFORE the chunk — but only for
+    // the pc that STARTED the call (fzBN: AD60/AD68 never fire because the
+    // chunk runs them natively mid-chain). Same visibility as slice-loop
+    // if() probes. Mid-chain state is only observable via consulting the
+    // post-lap effect at the next dispatched pc (see [ins] post-lap).
+    // Re-walk key probe (fzBJ): AD60 publishes head=r29 then AD68 rebuilds
+    // the search key from the NEW node (r6=[r29+12], r0=[r29+8]).
+    if(addr==0x8000AD60u||addr==0x8000AD68u){
+      static unsigned _e=0; if(++_e<=8){ uint32_t head=0; guest_read32(cpu->gpr[13]-31800u, &head);
+        fprintf(stderr,"[park] %s head=0x%08X r6=0x%08X r0=0x%08X r29=0x%08X r30=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+          addr==0x8000AD60u?"AD60(publish)":"AD68(rekey)",
+          head, cpu->gpr[6], cpu->gpr[0], cpu->gpr[29], cpu->gpr[30], cpu->gpr[4], cpu->lr, _e); }
+      return false; }
     // Read-only probe: log 16A38 (DI inquiry wrapper) entry regs to learn
     // the command-block pointer + callback. Touches nothing (returns false).
     if(addr==0x80016A38u){
@@ -827,13 +840,16 @@ void recomp_run_slice(void){
         // return), never via dispatch. So the whole insert path is native;
         // the walk DOES take it (AD1C cmp=ADE4 x4). Watch ADE0 instead (the
         // back-edge, dispatched): fires once per loop lap.
-        if(pc==0x8000ADE0u||pc==0x8000AD60u||pc==0x8000AE80u){
-          static unsigned _e3=0,_e4=0,_e5=0;
-          unsigned *c = pc==0x8000ADE0u?&_e3:pc==0x8000AD60u?&_e4:&_e5; (*c)++;
+        // (Re-walk AD60/AD68 probe moved to hle_host_call: those labels are
+        // mid-chain natives that never START a dolrecomp_call, so slice-loop
+        // if() probes can't see them; host_call runs before every chunk.)
+        if(pc==0x8000ADE0u||pc==0x8000AE80u){
+          static unsigned _e3=0,_e5=0;
+          unsigned *c = pc==0x8000ADE0u?&_e3:&_e5; (*c)++;
           if(*c<=3||*c%5000000==0){ uint32_t head=0; guest_read32(g_cpu.gpr[13]-31800u, &head);
-            const char* nm = pc==0x8000ADE0u?"ADE0(back-edge)":pc==0x8000AD60u?"AD60(publish)":"AE80(return)";
             fprintf(stderr,"[park] %s hit head=0x%08X r6=0x%08X r29=0x%08X r30=0x%08X (#%u)\n",
-              nm, head, g_cpu.gpr[6], g_cpu.gpr[29], g_cpu.gpr[30], *c); } }
+              pc==0x8000ADE0u?"ADE0(back-edge)":"AE80(return)",
+              head, g_cpu.gpr[6], g_cpu.gpr[29], g_cpu.gpr[30], *c); } }
         // 1142C/1140C = sync primitives called INSIDE the park path (fzAN:
         // node12's first write happens with pc=1142C). Dispatched (chunk_3
         // entries). Dump regs + node12 at each hit — which call in the park
