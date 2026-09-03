@@ -134,7 +134,13 @@ static uint64_t hle_external_read(CPUState* cpu, uint32_t addr, uint8_t size){
     // GXRuntime chassis owns VI/PI/PE; everything else still reports 0.
     u64 v = 0;
     if(dol_mmio_bus_read(&s_mmio_bus, cpu, addr, size, &v)) return v;
-    if((addr&0xFF000000u)==0xCC000000u || (addr&0xFF000000u)==0xCD000000u) return 0;
+    if((addr&0xFF000000u)==0xCC000000u || (addr&0xFF000000u)==0xCD000000u){
+        if(addr >= 0xCC006000u && addr < 0xCC006028u){
+            static int _n=0;
+            if(_n<16){ fprintf(stderr,"[di] read%u 0x%08X -> 0 (pc=0x%08X)\n", size, addr, cpu->pc); _n++; }
+        }
+        return 0;
+    }
     (void)cpu;(void)addr;(void)size;
     return 0;
 }
@@ -142,6 +148,12 @@ static void hle_external_write(CPUState* cpu, uint32_t addr, uint64_t val, uint8
     s_mmio_writes++;
     if(dol_mmio_bus_write(&s_mmio_bus, cpu, addr, size, val)) return;
     (void)cpu;(void)addr;(void)val;(void)size;
+    // DI command trace: log TSTART + command words so we learn what disc
+    // offsets the guest requests (no symbol map needed). Bounded logging.
+    if(addr >= 0xCC006000u && addr < 0xCC006028u){
+        static int _n=0;
+        if(_n<24){ fprintf(stderr,"[di] write%u 0x%08X <- 0x%llX (pc=0x%08X)\n", size, addr, (unsigned long long)val, cpu->pc); _n++; }
+    }
 }
 static uint32_t hle_external_read32(CPUState* cpu, uint32_t addr, uint8_t rid){
     (void)rid; s_mmio_reads++;
