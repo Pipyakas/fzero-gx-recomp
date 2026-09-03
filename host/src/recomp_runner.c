@@ -14,6 +14,8 @@
 #include "gxruntime/mmio_bus.h"
 #include "gxruntime/interrupts.h"
 #include "gxruntime/vi_clock.h"
+#include "gxruntime/di.h"
+#include "gxruntime/dvd.h"
 
 static CPUState g_cpu;
 static int g_inited = 0;
@@ -55,7 +57,9 @@ extern float gx_guest_frame_progress(void);
 static DolMmioBus s_mmio_bus;
 static DolInterrupts s_interrupts;
 static DolViClock s_vi_clock;
+static DolDi s_di;
 static int s_chassis_inited = 0;
+static int s_disc_present_logged = 0;
 static uint64_t s_ext_deliveries = 0; // external-interrupt deliveries to guest
 // The guest OS publishes its current thread's OSContext* at low-mem 0xD4.
 // Strikers host uses the same address (STRIKERS_OS_CONTEXT_POINTER);
@@ -71,18 +75,121 @@ static bool chassis_vi_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 val
     dol_interrupts_mmio_write(&s_interrupts, ea, size, value);
     return true;
 }
+static bool chassis_di_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* value){
+    (void)user;
+    if(!dol_di_mmio_contains(ea)) return false;
+    if(value) *value = dol_di_mmio_read(&s_di, ea, (u8)size);
+    // Level-triggered DI source follows the device model.
+    dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DI, dol_di_interrupt_pending(&s_di));
+    (void)cpu;
+    return true;
+}
+static bool chassis_di_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value){
+    (void)user;
+    if(!dol_di_mmio_contains(ea)) return false;
+    // Trace every DI MMIO write (bounded): command words + TSTART show the
+    // exact SDK sequence without needing a symbol map.
+    { static int _n=0; if(_n<40){ fprintf(stderr,"[di] %s write 0x%08X <- 0x%08X (pc=0x%08X)\n",
+        ea==0xCC00601Cu?"CTL":ea==0xCC006014u?"DMAADDR":ea==0xCC006018u?"DMALEN":"REG",
+        ea, (u32)value, cpu?cpu->pc:0); _n++; } }
+    dol_di_mmio_write(&s_di, cpu, ea, (u8)size, value);
+    dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DI, dol_di_interrupt_pending(&s_di));
+    return true;
+}
+// DI command executor: serve DVD reads from the opened disc image.
+// Register map (dolsdk2001 dvdlow.c: __DIRegs[2..7] == DI COMMAND_0..DMA_LEN
+// + CONTROL): a DVDLowRead programs c0=0xA8000000, c1=(offset>>2),
+// c2=length, dma_address=guest addr, dma_length=length, control=TSTART|DMA.
+// Command words arrive as raw MMIO writes (not shifted); offset = c1<<2.
+// Only the DMA-read path is served; everything else completes as ERROR so
+// the guest sees a real failure instead of a stuck status bit.
+static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
+    (void)user;
+    if(!cmd || !cmd->cpu) return DOL_DI_COMMAND_ERROR;
+    u32 c0 = cmd->command[0];
+    if(c0 == 0x12000000u && cmd->dma && !cmd->write && cmd->dma_length){
+        // DVDLowInquiry: 32-byte DVDDriveInfo struct (dolsdk2001 dvd.h:
+        // u16 revision, u16 deviceCode, u32 releaseDate, u8 pad[24]).
+        // Realizarre values from Dolphin: rev 1, device 0, date 0x20011023-ish.
+        // (GameCube SDK rev used by F-Zero era titles.)
+        u32 a = cmd->dma_address;
+        if(a >= GC_RAM_BASE && a + 32 <= GC_RAM_BASE + cmd->cpu->ram_size){
+            uint8_t* d = cmd->cpu->ram + (a - GC_RAM_BASE);
+            d[0]=0; d[1]=1; d[2]=0; d[3]=0;
+            d[4]=0x20; d[5]=0x01; d[6]=0x10; d[7]=0x23;
+            memset(d+8, 0, 24);
+        }
+        { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec INQUIRY -> guest 0x%08X\n", cmd->dma_address); _n++; } }
+        return DOL_DI_COMMAND_COMPLETE;
+    }
+    if((c0 & 0xFF000000u) == 0xA8000000u
+       && cmd->dma && !cmd->write && cmd->dma_length){
+        u32 disc_off = cmd->command[1] << 2;
+        { static int _n=0; if(_n<6){ fprintf(stderr,"[di] exec read c0=0x%08X off=0x%08X len=%u -> guest 0x%08X\n", c0, disc_off, cmd->dma_length, cmd->dma_address); _n++; } }
+        dvd_read_to_guest(cmd->cpu, cmd->dma_address, disc_off, cmd->dma_length);
+        return DOL_DI_COMMAND_COMPLETE;
+    }
+    { static int _n=0; if(_n<6){ fprintf(stderr,"[di] exec UNHANDLED c0=0x%08X c1=0x%08X c2=0x%08X dma=%u wr=%u addr=0x%08X len=%u\n", cmd->command[0], cmd->command[1], cmd->command[2], cmd->dma?1:0, cmd->write?1:0, cmd->dma_address, cmd->dma_length); _n++; } }
+    return DOL_DI_COMMAND_ERROR;
+}
 static void chassis_init(void){
     if(s_chassis_inited) return;
     dol_mmio_bus_init(&s_mmio_bus);
     dol_interrupts_init(&s_interrupts);
     dol_vi_clock_init(&s_vi_clock);
     dol_vi_clock_configure(&s_vi_clock, 1u, 60u, GC_TIMEBASE_HZ);
+    dol_di_init(&s_di);
+    dol_di_set_command_callback(&s_di, chassis_di_execute, NULL);
     // Route VI (0xCC002000 len 0x80) + PI (0xCC003000 len 0x40) + PE status
-    // through the production interrupt model; every other device still
+    // through the production interrupt model; DI (0xCC006000 len 0x28)
+    // through the production DI model; every other device still
     // reports 0 via hle_external_* fallback below.
     dol_mmio_bus_register(&s_mmio_bus, 0xCC002000u, 0x80u, chassis_vi_read, chassis_vi_write, NULL);
     dol_mmio_bus_register(&s_mmio_bus, 0xCC003000u, 0x40u, chassis_vi_read, chassis_vi_write, NULL);
     dol_mmio_bus_register(&s_mmio_bus, 0xCC00100Au, 2u, chassis_vi_read, chassis_vi_write, NULL);
+    dol_mmio_bus_register(&s_mmio_bus, 0xCC006000u, 0x28u, chassis_di_read, chassis_di_write, NULL);
+    // Open the disc image once so DMA reads have backing bytes.
+    // dvd_open_image is idempotent (first success wins). Candidates: the
+    // extracted fst.bin's siblings first (boot.bin/bi2.bin live next to a
+    // full dump), then <root>.iso/.gcm, then the .rvz itself (handled by
+    // DolRecomp's disc extractor only — dvd.c needs a plain ISO, so the
+    // .rvz probe is expected to fail and fall through to no-image).
+    {
+        extern const char* DVDHostRoot(void);
+        const char* root = DVDHostRoot();
+        char ipath[640];
+        static const char* tails[] = {
+            "\\sys\\boot.bin", "\\files\\sys\\boot.bin",
+            ".iso", ".gcm",
+            "\\f-zero gx (usa).rvz", "\\f-zero gx (usa).iso",
+            NULL
+        };
+        for(int t=0; tails[t]; t++){
+            if(tails[t][0]=='.'){
+                char parent[512]; snprintf(parent, sizeof(parent), "%s", root);
+                char* bs = strrchr(parent, '\\');
+                if(!bs) bs = strrchr(parent, '/');
+                if(!bs) continue;
+                *bs = 0;
+                snprintf(ipath, sizeof(ipath), "%s%s", parent, tails[t]);
+            } else {
+                snprintf(ipath, sizeof(ipath), "%s%s", root, tails[t]);
+            }
+            FILE* f = fopen(ipath, "rb");
+            if(!f) continue;
+            fclose(f);
+            if(dvd_open_image(ipath)){
+                if(!s_disc_present_logged){ fprintf(stderr,"[dvd] image %s\n", ipath); s_disc_present_logged=1; }
+                break;
+            }
+        }
+        if(!dvd_image_ready() && !s_disc_present_logged){
+            fprintf(stderr,"[dvd] no plain ISO image; DMA reads will ERROR (cover=%s)\n", root);
+            s_disc_present_logged = 1;
+        }
+        dol_di_set_disc_present(&s_di, dvd_image_ready());
+        dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DI, dol_di_interrupt_pending(&s_di));
+    }
     s_chassis_inited = 1;
 }
 static uint32_t chassis_ctx_ptr(void){

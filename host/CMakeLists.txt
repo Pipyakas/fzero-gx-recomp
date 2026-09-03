@@ -54,13 +54,16 @@ file(GLOB_RECURSE RECOMP_DOL_CHUNKS "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp
 file(GLOB RECOMP_DOL_CHUNKS_FB "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp_all/generated/dol/generated/chunks/*.c")
 list(APPEND RECOMP_DOL_CHUNKS ${RECOMP_DOL_CHUNKS_FB})
 
-# GXRuntime chassis (C-only, no Aurora): real VI/PI interrupt model + retrace clock
+# GXRuntime chassis (C-only, no Aurora): VI/PI interrupt model + retrace clock
+# + DI (DVD interface) model + DVD image/FST layer.
 set(GXRUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/RingOut/ModernGekko/vendor/dolphin/GXRuntime")
 set(GXRUNTIME_SOURCES
     ${GXRUNTIME_DIR}/src/mmio_bus.c
     ${GXRUNTIME_DIR}/src/interrupts.c
     ${GXRUNTIME_DIR}/src/vi_clock.c
     ${GXRUNTIME_DIR}/src/event_clock.c
+    ${GXRUNTIME_DIR}/src/di.c
+    ${GXRUNTIME_DIR}/src/dvd.c
 )
 
 add_library(recomp_core STATIC
@@ -76,6 +79,15 @@ target_include_directories(recomp_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp_all/generated"
 )
 target_compile_definitions(recomp_core PRIVATE _CRT_SECURE_NO_WARNINGS)
+# dvd.c uses POSIX fseeko()/off_t; the Windows UCRT provides
+# _fseeki64/__int64 instead. Force-include the compat header for that TU
+# only (a global -Dfseeko= would break <stdio.h>'s own declaration).
+target_include_directories(recomp_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/compat")
+if(WIN32)
+    set_source_files_properties(
+        "${GXRUNTIME_DIR}/src/dvd.c"
+        PROPERTIES COMPILE_FLAGS "-include \"${CMAKE_CURRENT_SOURCE_DIR}/src/compat/dvd_port.h\"")
+endif()
 
 add_executable(fzero-gx WIN32
     src/main_host.c
