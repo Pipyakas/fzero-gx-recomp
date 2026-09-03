@@ -252,7 +252,11 @@ static void chassis_init(void){
     dol_mmio_bus_init(&s_mmio_bus);
     dol_interrupts_init(&s_interrupts);
     dol_vi_clock_init(&s_vi_clock);
-    dol_vi_clock_configure(&s_vi_clock, 1u, 60u, GC_TIMEBASE_HZ);
+    // fzB7: work_units_per_retrace was 1 with advance(1) per dispatch =>
+    // EVERY block = a full 675000-tick retrace; timebase raced ~1e5x too
+    // fast, so every 1140C mftb latch (AECC r4) was unique and the AC44
+    // free-list walk never settled. One retrace per 200k dispatches instead.
+    dol_vi_clock_configure(&s_vi_clock, 200000u, 60u, GC_TIMEBASE_HZ);
     // fzAV result: timebase seed REFUTED (node8 went 0->1 = wall-clock
     // read working, but park persists). Seed reverted to 0 to keep M0
     // determinism (retrace-driven only).
