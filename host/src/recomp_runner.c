@@ -767,17 +767,19 @@ void recomp_run_slice(void){
           static unsigned _p=0; _p++;
           if(_p<=6||_p%20000000==0){ uint32_t w8=0xDEADu,w12=0xDEADu,w20=0xDEADu;
             guest_read32(g_cpu.gpr[6]+8u, &w8); guest_read32(g_cpu.gpr[6]+12u, &w12); guest_read32(g_cpu.gpr[6]+20u, &w20);
-            // Emulate AD24-AD38 128-bit compare (r0=node8 @AD1C, r5=node12
-            // @AD20): lo=r30-w12, hi=r4-(r0^0x80000000), borrow-chained;
-            // neg. sets EQ iff hi:lo==0 -> ADD8 advance, else ADE4 insert.
+            // Emulate AD24-AD38 128-bit compare. CORRECTED fzBE: subfc r0 =
+            // lo = r30-w12; subfe r3 = hi = r4-(w8^0x80000000)+CA; subfe
+            // r3,r4,r4 folds the borrow; neg. sets EQ iff that == 0.
+            // So: EQ(advance ADD8) iff lo==0 AND hi+CAborrow==0.
             uint32_t r3h = w8 ^ 0x80000000u, r4 = g_cpu.gpr[4], r30 = g_cpu.gpr[30];
             uint64_t lo = (uint64_t)r30 + (uint64_t)(~w12) + 1u; uint32_t ca = (uint32_t)(lo>>32);
             uint64_t hi = (uint64_t)r4 + (uint64_t)(~r3h) + ca;
-            uint32_t borrow = ca ? 0u : 1u; // subfe carry semantics: CA=0 => borrow
-            uint32_t hirem = (uint32_t)hi + borrow; // subfe r3,r4,r4 + borrow
-            int toADD8 = (hirem==0 && (uint32_t)lo==0);
-            fprintf(stderr,"[park] AD1C r6=0x%08X node8=0x%08X node12=0x%08X next20=0x%08X r29(new)=0x%08X r30=0x%08X r4=0x%08X cmp=%s lr=0x%08X (#%u)\n",
-              g_cpu.gpr[6], w8, w12, w20, g_cpu.gpr[29], r30, r4, toADD8?"ADD8":"ADE4", g_cpu.lr, _p); }
+            uint32_t hfold = (uint32_t)hi + (ca?0u:1u); // subfe r3,r4,r4 + ~CA
+            int toADD8 = ((uint32_t)lo==0 && ((hfold==0&&(uint32_t)hi==0)||((uint32_t)hi==0&&(ca==0?1u:0u)==0&&(int32_t)((uint32_t)hi)==0)));
+            // Simpler exact form: EQ iff lo==0 && hi==0 && CA==1 (no borrow).
+            toADD8 = ((uint32_t)lo==0 && (uint32_t)hi==0 && ca==1);
+            fprintf(stderr,"[park] AD1C r6=0x%08X node8=0x%08X node12=0x%08X next20=0x%08X r29(new)=0x%08X r30=0x%08X r4=0x%08X lo=%08X hi=%08X ca=%u cmp=%s lr=0x%08X (#%u)\n",
+              g_cpu.gpr[6], w8, w12, w20, g_cpu.gpr[29], r30, r4, (uint32_t)lo, (uint32_t)hi, ca, toADD8?"ADD8":"ADE4", g_cpu.lr, _p); }
           // One-shot collision check: heap head (-31800(r13)) vs our thread.
           { static int _c=0; if(!_c){ _c=1;
             uint32_t head=0,alo=0,ahi=0,e4=0; int i;
