@@ -763,6 +763,20 @@ void recomp_run_slice(void){
               if(caller<=sp||!guest_read32(caller+4u,&ret)) break;
               fprintf(stderr," [0x%08X]", ret); sp=caller; }
             fprintf(stderr,"\n"); } }
+        // Insert-effect check (fzBI): the AD44/AD48 stores ([r6+16]=r29,
+        // [r29+20]=r6) run native mid-chain so chunk probes can't catch them —
+        // but their EFFECT is visible at the next dispatched AD1C: the tail
+        // node's [r6+16] should hold the new node, and new[+20] the successor.
+        // Track prev-lap (r6,r29) vs current [r6+16]/[r29+20]: SELF-link iff
+        // [r6+16]==r6 && [r29+20]==r29 with r6==r29.
+        { static uint32_t _pr6=0,_pr29=0; static int _have=0;
+          if(pc==0x8000AD1Cu){
+            if(_have){ uint32_t s16=0,s20=0;
+              guest_read32(_pr6+16u,&s16); guest_read32(_pr29+20u,&s20);
+              if(_pr6==_pr29){ static unsigned _n=0;
+                if(++_n<=6) fprintf(stderr,"[ins] post-lap r6==r29==0x%08X [r6+16]=0x%08X [r29+20]=0x%08X %s\n",
+                  _pr6, s16, s20, (s16==_pr6&&s20==_pr29)?"SELF-LINK":"linked-ok"); } }
+            _pr6=g_cpu.gpr[6]; _pr29=g_cpu.gpr[29]; _have=1; } }
         if(pc==0x8000AD1Cu){
           static unsigned _p=0; _p++;
           if(_p<=6||_p%20000000==0){ uint32_t w8=0xDEADu,w12=0xDEADu,w20=0xDEADu;
