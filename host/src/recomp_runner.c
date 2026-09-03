@@ -763,8 +763,8 @@ void recomp_run_slice(void){
               g_cpu.gpr[6], g_cpu.gpr[28], g_cpu.gpr[4], g_cpu.gpr[27], g_cpu.gpr[29], g_cpu.gpr[30], n12, (unsigned long long)g_cpu.timebase, g_cpu.lr, _e); } }
         if(pc==0x8000AE94u){
           static unsigned _w=0; _w++;
-          if(_w<=12) fprintf(stderr,"[watch] AE94 r6=0x%08X r3=0x%08X r5=0x%08X r7=0x%08X lr=0x%08X tb=0x%llX (#%u)\n",
-            g_cpu.gpr[6], g_cpu.gpr[3], g_cpu.gpr[5], g_cpu.gpr[7], g_cpu.lr, (unsigned long long)g_cpu.timebase, _w); }
+          if(_w<=12) fprintf(stderr,"[watch] AE94 r6=0x%08X r3=0x%08X r5=0x%08X r7=0x%08X r30=0x%08X r31=0x%08X lr=0x%08X tb=0x%llX (#%u)\n",
+            g_cpu.gpr[6], g_cpu.gpr[3], g_cpu.gpr[5], g_cpu.gpr[7], g_cpu.gpr[30], g_cpu.gpr[31], g_cpu.lr, (unsigned long long)g_cpu.timebase, _w); }
         // 16990's caller: backchain at AE94 entry shows who called the
         // wrapper. One-shot EABI walk dump.
         if(pc==0x8000AE94u){
