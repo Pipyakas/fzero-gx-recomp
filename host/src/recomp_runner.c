@@ -278,6 +278,24 @@ static void poke16_set(uint32_t addr, uint16_t bits){ uint8_t* h=NULL; if(addr>=
 static void poke16_clr(uint32_t addr, uint16_t bits){ uint8_t* h=NULL; if(addr>=GC_RAM_BASE && addr<GC_RAM_BASE+g_cpu.ram_size) h=g_cpu.ram+(addr-GC_RAM_BASE); else if(addr>=GC_RAM_UNCACHED && addr<GC_RAM_UNCACHED+g_cpu.ram_size) h=g_cpu.ram+(addr-GC_RAM_UNCACHED); if(h){ uint16_t cur=(uint16_t)(h[0]<<8|h[1]); cur&=~bits; h[0]=(uint8_t)(cur>>8); h[1]=(uint8_t)(cur&0xFF); } }
 static void poke32_set(uint32_t addr, uint32_t v){ uint8_t* h=NULL; if(addr>=GC_RAM_BASE && addr<GC_RAM_BASE+g_cpu.ram_size) h=g_cpu.ram+(addr-GC_RAM_BASE); else if(addr>=GC_RAM_UNCACHED && addr<GC_RAM_UNCACHED+g_cpu.ram_size) h=g_cpu.ram+(addr-GC_RAM_UNCACHED); if(h){ h[0]=v>>24; h[1]=(v>>16)&0xFF; h[2]=(v>>8)&0xFF; h[3]=v&0xFF; } }
 static uint32_t s_last_pc=0; static int s_same=0;
+// Walk the PPC EABI backchain: [sp] -> caller frame, [caller+4] -> ret addr.
+// Bounded + RAM-checked; Strikers dump_backchain pattern.
+static void log_backchain(void){
+    u32 sp = g_cpu.gpr[1];
+    fprintf(stderr,"[bt] pc=0x%08X lr=0x%08X r1=0x%08X msr=0x%08X ctr=0x%08X:",
+        g_cpu.pc, g_cpu.lr, sp, g_cpu.msr, g_cpu.ctr);
+    for(int f=0; f<8 && sp>=GC_RAM_BASE && sp+8u<GC_RAM_BASE+g_cpu.ram_size; f++){
+        u32 off = sp - GC_RAM_BASE;
+        u32 caller = ((u32)g_cpu.ram[off]<<24)|((u32)g_cpu.ram[off+1]<<16)|((u32)g_cpu.ram[off+2]<<8)|g_cpu.ram[off+3];
+        if(caller<=sp || caller<GC_RAM_BASE || caller+8u>=GC_RAM_BASE+g_cpu.ram_size) break;
+        u32 roff = caller - GC_RAM_BASE;
+        u32 ret = ((u32)g_cpu.ram[roff+4]<<24)|((u32)g_cpu.ram[roff+5]<<16)|((u32)g_cpu.ram[roff+6]<<8)|g_cpu.ram[roff+7];
+        fprintf(stderr," [0x%08X]", ret);
+        sp = caller;
+    }
+    fputc('\n', stderr);
+}
+static uint64_t s_slice_n = 0;
 void recomp_run_slice(void){
     if(!g_inited) return;
     g_cpu.timebase += 486000000ULL/240;
@@ -358,6 +376,7 @@ void recomp_run_slice(void){
             }
             break;
         }
+        if(++s_slice_n % (16384ull*75ull) == 0) log_backchain(); // ~75 slices
     }
 }
 unsigned recomp_pc(void){ return g_cpu.pc; }
