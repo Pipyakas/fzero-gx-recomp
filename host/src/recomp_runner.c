@@ -83,10 +83,6 @@ static bool chassis_di_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* val
     if(value) *value = dol_di_mmio_read(&s_di, ea, (u8)size);
     // Level-triggered DI source follows the device model.
     dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DI, dol_di_interrupt_pending(&s_di));
-    // Bounded trace of every DI-region read with value + pc (one run only;
-    // remove after. The 16038 check may read status via RAM mirror instead).
-    { static int _n=0;
-      if(_n<32){ fprintf(stderr,"[di] read 0x%08X -> 0x%08X (pc=0x%08X)\n", ea, value?(u32)*value:0u, cpu?cpu->pc:0); _n++; } }
     (void)cpu;
     return true;
 }
