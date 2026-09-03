@@ -73,6 +73,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, PWSTR cmd, int show) {
     printf("Window 960x540 — close to exit. WSI=%s\n", g_vk==1?"Vulkan":"GDI");
 
     MSG msg; DWORD lastTitle=0; uint32_t lastFr=0;
+    uint32_t frontierHi = 0; // max pc ever observed (boot frontier)
     while(1){
         while(PeekMessageW(&msg,NULL,0,0,PM_REMOVE)){
             if(msg.message==WM_QUIT) goto done;
@@ -90,7 +91,9 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, PWSTR cmd, int show) {
                 else gx_vulkan_set_clear(6.0f/255,24.0f/255,64.0f/255);
             }
             uint64_t draws=gx_fifo_draws(), cmds=gx_fifo_cmds();
-            wchar_t t[192]; swprintf(t,192,L"F-Zero GX pc=0x%08X gp=%u fr=%u draws=%llu cmds=%llu mmio=%llu", recomp_pc(), gb, fr, (unsigned long long)draws, (unsigned long long)cmds, (unsigned long long)mr);
+            uint32_t pcNow = recomp_pc();
+            if(pcNow > frontierHi) frontierHi = pcNow;
+            wchar_t t[192]; swprintf(t,192,L"F-Zero GX pc=0x%08X hi=0x%08X gp=%u fr=%u draws=%llu cmds=%llu mmio=%llu", pcNow, frontierHi, gb, fr, (unsigned long long)draws, (unsigned long long)cmds, (unsigned long long)mr);
             SetWindowTextW(w,t);
         }
 #ifndef HOST_GX_NULL
