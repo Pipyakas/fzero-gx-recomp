@@ -17,6 +17,15 @@
 #include "gxruntime/di.h"
 #include "gxruntime/dvd.h"
 #include "gxruntime/si.h"
+// Local callback trampoline (host/src/hle_callback.c), extracted from
+// GXRuntime hle_core.c — hle_core.c itself can't link here (newer CPUState
+// + card/ARAM/platform deps). Keep hle_abi.h out too (guest_memory dep);
+// this TU only needs the four callback functions + the return sentinel.
+#define HLE_CALLBACK_RETURN 0x7FFF0000u
+bool dol_hle_queue_guest_callback(u32 address, s32 channel, s32 result);
+bool dol_hle_poll_callback(CPUState* cpu);
+bool dol_hle_handle_callback_return(CPUState* cpu, u32 address);
+void dol_hle_init(const void* config);
 
 static CPUState g_cpu;
 static int g_inited = 0;
@@ -136,6 +145,11 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
             memset(d+8, 0, 24);
         }
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec INQUIRY -> guest 0x%08X\n", cmd->dma_address); _n++; } }
+        // The SDK completion callback (r4 at 16A38 entry, 0x80018D1C) sets
+        // the RAM flag r13-31592=1 that the 16018 waiter checks. Queue it
+        // through the HLE callback trampoline: pc=callback, lr=RETURN.
+        // Callback address was captured at queue time (see 16A38 probe).
+        dol_hle_queue_guest_callback(0x80018D1Cu, 0, 0);
         return DOL_DI_COMMAND_COMPLETE;
     }
     if((c0 & 0xFF000000u) == 0xA8000000u
@@ -178,6 +192,7 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
 }
 static void chassis_init(void){
     if(s_chassis_inited) return;
+    dol_hle_init(NULL);
     dol_mmio_bus_init(&s_mmio_bus);
     dol_interrupts_init(&s_interrupts);
     dol_vi_clock_init(&s_vi_clock);
@@ -566,6 +581,13 @@ void recomp_run_slice(void){
             }
             chassis_deliver_external();
         }
+        // HLE async-callback trampoline: if a queued guest callback (e.g.
+        // the DI inquiry completion at 0x80018D1C) is pending, run it with
+        // saved context; it returns through HLE_CALLBACK_RETURN.
+        if(pc == HLE_CALLBACK_RETURN){
+            if(dol_hle_handle_callback_return(&g_cpu, pc)) continue;
+        }
+        if(dol_hle_poll_callback(&g_cpu)) continue;
         if(!dolrecomp_call(&g_cpu, pc)){
             if(g_cpu.exception==0){
                 static int miss_cnt=0;

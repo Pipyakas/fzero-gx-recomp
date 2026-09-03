@@ -57,6 +57,12 @@ list(APPEND RECOMP_DOL_CHUNKS ${RECOMP_DOL_CHUNKS_FB})
 # GXRuntime chassis (C-only, no Aurora): VI/PI interrupt model + retrace clock
 # + DI (DVD interface) model + DVD image/FST layer.
 set(GXRUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/RingOut/ModernGekko/vendor/dolphin/GXRuntime")
+# NOTE: guest_memory.c/memory_card.c/aram.c/platform.c/headless_backend.c
+# are NOT included: guest_memory.c targets a newer CPUState (exram +
+# external_pointer tail) than DolRecomp's cpu.h in this TU, and the rest
+# pull platform/GX deps. hle_core.c's Card/LC/ARAM helpers that need them
+# are unused here (only queue/poll/return + OSReport/DVD/PAD paths matter);
+# if link errors name them, add minimal local stubs instead of the files.
 set(GXRUNTIME_SOURCES
     ${GXRUNTIME_DIR}/src/mmio_bus.c
     ${GXRUNTIME_DIR}/src/interrupts.c
@@ -65,6 +71,8 @@ set(GXRUNTIME_SOURCES
     ${GXRUNTIME_DIR}/src/di.c
     ${GXRUNTIME_DIR}/src/dvd.c
     ${GXRUNTIME_DIR}/src/si.c
+    ${GXRUNTIME_DIR}/src/hle/hle_abi.c
+    src/hle_callback.c
 )
 
 add_library(recomp_core STATIC
