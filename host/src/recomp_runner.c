@@ -805,13 +805,19 @@ void recomp_run_slice(void){
               if(nx==head){ fprintf(stderr," CIRCULAR"); break; }
               cur=nx; }
             fprintf(stderr," (#%u)\n", _ls); } }
-        // AD38 = 128-bit compare exit (neg. result -> ADD8 advance vs ADE4
-        // insert). Never dispatched (same-chunk goto) so count it via the
-        // AD1C-hit parity: AD1C fires every loop iteration; ADD8 fires only
-        // on advance. Ratio tells whether the compare always fails.
-        if(pc==0x8000ADE4u||pc==0x8000AD60u||pc==0x8000AE80u){
-          static unsigned _e1=0,_e2=0,_e3=0; unsigned *c = pc==0x8000ADE4u?&_e1:pc==0x8000AD60u?&_e2:&_e3; (*c)++;
-          if(*c<=3) fprintf(stderr,"[park] %s hit (#%u)\n", pc==0x8000ADE4u?"ADE4(insert-exit)":pc==0x8000AD60u?"AD60(publish)":"AE80(return)", *c); }
+        // Insert-path pcs (fzBC correction): AD3C/AD54/AD60/AE80 carry
+        // downcount and DO dispatch when reached — but they only run after
+        // ADE4, and ADE4 is entered ONLY via the ADE0 back-edge (downcount
+        // return), never via dispatch. So the whole insert path is native;
+        // the walk DOES take it (AD1C cmp=ADE4 x4). Watch ADE0 instead (the
+        // back-edge, dispatched): fires once per loop lap.
+        if(pc==0x8000ADE0u||pc==0x8000AD60u||pc==0x8000AE80u){
+          static unsigned _e3=0,_e4=0,_e5=0;
+          unsigned *c = pc==0x8000ADE0u?&_e3:pc==0x8000AD60u?&_e4:&_e5; (*c)++;
+          if(*c<=3||*c%5000000==0){ uint32_t head=0; guest_read32(g_cpu.gpr[13]-31800u, &head);
+            const char* nm = pc==0x8000ADE0u?"ADE0(back-edge)":pc==0x8000AD60u?"AD60(publish)":"AE80(return)";
+            fprintf(stderr,"[park] %s hit head=0x%08X r6=0x%08X r29=0x%08X r30=0x%08X (#%u)\n",
+              nm, head, g_cpu.gpr[6], g_cpu.gpr[29], g_cpu.gpr[30], *c); } }
         // 1142C/1140C = sync primitives called INSIDE the park path (fzAN:
         // node12's first write happens with pc=1142C). Dispatched (chunk_3
         // entries). Dump regs + node12 at each hit — which call in the park
