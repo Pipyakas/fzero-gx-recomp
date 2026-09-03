@@ -452,6 +452,13 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // chunk runs them natively mid-chain). Same visibility as slice-loop
     // if() probes. Mid-chain state is only observable via consulting the
     // post-lap effect at the next dispatched pc (see [ins] post-lap).
+    // 16920 = DVD stop-motor wrapper entry (lr=18CF0/1923C per backchain).
+    // r30 at entry vs at 1698C-AE94 tells whether r30 is an IN-arg (caller
+    // set) or manufactured inside (16970 mulli). Dump r3/r30/r31 + timebase.
+    if(addr==0x80016920u){
+      static unsigned _m=0; if(++_m<=6) fprintf(stderr,"[watch] 16920 r3=0x%08X r30=0x%08X r31=0x%08X tb=0x%llX lr=0x%08X (#%u)\n",
+        cpu->gpr[3], cpu->gpr[30], cpu->gpr[31], (unsigned long long)cpu->timebase, cpu->lr, _m);
+      return false; }
     // Re-walk key probe (fzBJ): AD60 publishes head=r29 then AD68 rebuilds
     // the search key from the NEW node (r6=[r29+12], r0=[r29+8]).
     if(addr==0x8000AD60u||addr==0x8000AD68u){
