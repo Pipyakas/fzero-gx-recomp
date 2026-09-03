@@ -733,8 +733,32 @@ void recomp_run_slice(void){
         if(pc==0x8000AC44u){
           static unsigned _v=0; _v++;
           if(_v<=4){ uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
-            fprintf(stderr,"[watch] AC44 req r3=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X node12=0x%08X lr=0x%08X (#%u)\n",
-              g_cpu.gpr[3], g_cpu.gpr[5], g_cpu.gpr[6], g_cpu.gpr[7], n12, g_cpu.lr, _v); } }
+            fprintf(stderr,"[watch] AC44 req r3=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X node12=0x%08X lr=0x%08X tb=0x%llX (#%u)\n",
+              g_cpu.gpr[3], g_cpu.gpr[5], g_cpu.gpr[6], g_cpu.gpr[7], n12, g_cpu.lr, (unsigned long long)g_cpu.timebase, _v); } }
+        // AEC8 is `bl 1142C` with NO downcount (falls through from AEC4, no
+        // dispatch point) — fzB1 confirms it never fires. Watch AECC instead
+        // (addc r6,r28,r4, HAS downcount -=5, dispatched): r6 here is the
+        // 64-bit key low word r28+r4 that becomes the AC44 search key.
+        if(pc==0x8000AECCu){
+          static unsigned _e=0; _e++;
+          if(_e<=12){ uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
+            fprintf(stderr,"[watch] AECC r6=0x%08X r28=0x%08X r4=0x%08X r27=0x%08X r29=0x%08X r30=0x%08X node12=0x%08X tb=0x%llX lr=0x%08X (#%u)\n",
+              g_cpu.gpr[6], g_cpu.gpr[28], g_cpu.gpr[4], g_cpu.gpr[27], g_cpu.gpr[29], g_cpu.gpr[30], n12, (unsigned long long)g_cpu.timebase, g_cpu.lr, _e); } }
+        if(pc==0x8000AE94u){
+          static unsigned _w=0; _w++;
+          if(_w<=12) fprintf(stderr,"[watch] AE94 r6=0x%08X r3=0x%08X r5=0x%08X r7=0x%08X lr=0x%08X tb=0x%llX (#%u)\n",
+            g_cpu.gpr[6], g_cpu.gpr[3], g_cpu.gpr[5], g_cpu.gpr[7], g_cpu.lr, (unsigned long long)g_cpu.timebase, _w); }
+        // 16990's caller: backchain at AE94 entry shows who called the
+        // wrapper. One-shot EABI walk dump.
+        if(pc==0x8000AE94u){
+          static int _b=0; if(!_b){ _b=1;
+            uint32_t sp=g_cpu.gpr[1];
+            fprintf(stderr,"[watch] AE94-entry backchain pc=0x%08X lr=0x%08X sp=0x%08X:", pc, g_cpu.lr, sp);
+            for(int f=0;f<6;f++){ uint32_t caller=0,ret=0;
+              if(!guest_read32(sp,&caller)) break;
+              if(caller<=sp||!guest_read32(caller+4u,&ret)) break;
+              fprintf(stderr," [0x%08X]", ret); sp=caller; }
+            fprintf(stderr,"\n"); } }
         if(pc==0x8000AD1Cu){
           static unsigned _p=0; _p++;
           if(_p<=6||_p%20000000==0){ uint32_t w8=0xDEADu,w12=0xDEADu,w20=0xDEADu;
@@ -748,8 +772,8 @@ void recomp_run_slice(void){
             uint32_t borrow = ca ? 0u : 1u; // subfe carry semantics: CA=0 => borrow
             uint32_t hirem = (uint32_t)hi + borrow; // subfe r3,r4,r4 + borrow
             int toADD8 = (hirem==0 && (uint32_t)lo==0);
-            fprintf(stderr,"[park] AD1C r6=0x%08X node8=0x%08X node12=0x%08X next20=0x%08X r30=0x%08X r4=0x%08X cmp=%s lr=0x%08X (#%u)\n",
-              g_cpu.gpr[6], w8, w12, w20, r30, r4, toADD8?"ADD8":"ADE4", g_cpu.lr, _p); }
+            fprintf(stderr,"[park] AD1C r6=0x%08X node8=0x%08X node12=0x%08X next20=0x%08X r29(new)=0x%08X r30=0x%08X r4=0x%08X cmp=%s lr=0x%08X (#%u)\n",
+              g_cpu.gpr[6], w8, w12, w20, g_cpu.gpr[29], r30, r4, toADD8?"ADD8":"ADE4", g_cpu.lr, _p); }
           // One-shot collision check: heap head (-31800(r13)) vs our thread.
           { static int _c=0; if(!_c){ _c=1;
             uint32_t head=0,alo=0,ahi=0,e4=0; int i;
