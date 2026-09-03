@@ -429,6 +429,12 @@ static void hle_fallback(CPUState* cpu, uint32_t raw, uint32_t cia){
         if(xo==1014){ uint32_t ra=(raw>>16)&31u, rb=(raw>>11)&31u; uint32_t ea=(ra?cpu->gpr[ra]:0)+cpu->gpr[rb]; ppc_dcbz_l(cpu,ea,cia); if(cpu->exception==0) cpu->pc=cia+4; return; }
         if(xo==19){ uint32_t rt=(raw>>21)&31u; cpu->gpr[rt]=cpu->cr; cpu->pc=cia+4; return; }
         if(xo==144){ cpu->pc=cia+4; return; }
+        // mtdec (X/O 166) / mfdec (X/O 459): decrementer is SPR 22 in the
+        // spr[] file (mtspr/mfspr already route it); the fallback only needs
+        // to advance pc. Before this, mtdec raised ILLEGAL and broke the
+        // slice out of the AD1C-park allocator path (9FEC call at AD9C/ADC4).
+        if(xo==166){ uint32_t rs=(raw>>21)&31u; ppc_mtspr(cpu,22,cpu->gpr[rs],cia); if(cpu->exception==0) cpu->pc=cia+4; return; }
+        if(xo==459){ uint32_t rt=(raw>>21)&31u; uint32_t before=cpu->exception; uint32_t v=ppc_mfspr(cpu,22,cia); if(cpu->exception==before){ cpu->gpr[rt]=v; cpu->pc=cia+4; } return; }
     }
     fprintf(stderr,"[hle] fallback raw=0x%08X @0x%08X\n",raw,cia);
     ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
@@ -711,15 +717,25 @@ void recomp_run_slice(void){
             fprintf(stderr,"[dvdsm] %s r3=%u r4=0x%08X st=%u drv=%u (#%u)\n", pc==0x80018F38u?"18F38":pc==0x80018E68u?"18E68":pc==0x8001920Cu?"1920C":pc==0x80018DB0u?"18DB0":pc==0x80018D1Cu?"18D1C":pc==0x80018CC8u?"18CC8":"18D68", g_cpu.gpr[3], g_cpu.gpr[4], s56, s60, *c); }
           if((*c%2000)==0){ u32 s56=0,s60=0,cb=0,cc=0; guest_read32(g_cpu.gpr[13]-31568u, &s56); guest_read32(g_cpu.gpr[13]-31460u, &s60); guest_read32(g_cpu.gpr[13]-31488u, &cb); guest_read32(g_cpu.gpr[13]-31584u, &cc);
             fprintf(stderr,"[dvdsm] counts 18D1C=%u 18D68=%u 18DB0=%u 18E68=%u 18F38=%u 1920C=%u 18CC8=%u st=%u drv=%u curblk=0x%08X cb-31584=0x%08X\n", _c5,_c7,_c4,_c2,_c1,_c3,_c6, s56, s60, cb, cc); } }
-        // A374 = real inquiry completion callback. Same-chunk branches are
-        // native gotos (no dispatch), so A384/A3A0 probes can't fire —
-        // instead dump block+12 at entry: 0 = END write survived (success
-        // path), nonzero = overwritten after our write (error path).
-        if(pc==0x8000A374u){
-          static unsigned _a1=0; _a1++;
-          if(_a1<=3||_a1%4000==0){ uint32_t st=0xDEADu; guest_read32(g_cpu.gpr[4]+12u, &st);
-            fprintf(stderr,"[dvdsm] A374 r3=0x%08X blk=0x%08X blk+12=%u lr=0x%08X (#%u)\n",
-              g_cpu.gpr[3], g_cpu.gpr[4], st, g_cpu.lr, _a1); } }
+        // AD1C-park probe (fzAE): guest sits in a 64-bit list walk
+        // (AD1C lwz r0,8(r6) / AD20 lwz r5,12(r6), subfc/subfe/neg. on CR0,
+        // exit at AD38->ADD8). Dump r6 node ptr, node[8], node[12], and CR —
+        // read-only. If r6/node words never change, the list is circular or
+        // its successor is never written (missing DMA? missing callback?).
+        if(pc==0x8000AD1Cu){
+          static unsigned _p=0; _p++;
+          if(_p<=6||_p%20000000==0){ uint32_t w8=0xDEADu,w12=0xDEADu;
+            guest_read32(g_cpu.gpr[6]+8u, &w8); guest_read32(g_cpu.gpr[6]+12u, &w12);
+            fprintf(stderr,"[park] AD1C r6=0x%08X node8=0x%08X node12=0x%08X r30=0x%08X cr=0x%08X lr=0x%08X (#%u)\n",
+              g_cpu.gpr[6], w8, w12, g_cpu.gpr[30], g_cpu.cr, g_cpu.lr, _p); } }
+        // ADD8 = list-advance (r6 = r6->next@+20). If the walk ever advances,
+        // this fires; if the list is circular it fires forever on the same
+        // 2-3 nodes. Dumps the node chain (3 hops) read-only.
+        if(pc==0x8000ADD8u){
+          static unsigned _q=0; _q++;
+          if(_q<=4||_q%5000000==0){ uint32_t n0=g_cpu.gpr[6],n1=0,n2=0,n3=0;
+            guest_read32(n0+20u, &n1); if(n1) guest_read32(n1+20u, &n2); if(n2) guest_read32(n2+20u, &n3);
+            fprintf(stderr,"[park] ADD8 chain 0x%08X -> 0x%08X -> 0x%08X -> 0x%08X (#%u)\n", n0, n1, n2, n3, _q); } }
         // 14168/1416C/14170/1417C = upper-layer flag check (0x800030CE==0x8200?).
         // 14170 never dispatched in prior runs — read-only dump of the flag +
         // block word0 to learn which side the branch takes.
