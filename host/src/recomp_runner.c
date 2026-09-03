@@ -132,6 +132,15 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
     (void)user;
     if(!cmd || !cmd->cpu) return DOL_DI_COMMAND_ERROR;
     u32 c0 = cmd->command[0];
+    { static unsigned _nInq=0,_nStop=0,_nRead=0,_nOther=0,_nTot=0; static u32 _lastOther=0;
+      _nTot++;
+      if(c0==0x12000000u) _nInq++;
+      else if((c0&0xFF000000u)==0xE3000000u) _nStop++;
+      else if((c0&0xFF000000u)==0xA8000000u) _nRead++;
+      else { _nOther++; _lastOther=c0; }
+      if(_nTot==1 || _nTot%2000==0 || ((c0&0xFF000000u)!=0x12000000u&&(c0&0xFF000000u)!=0xE3000000u&&(c0&0xFF000000u)!=0xA8000000u&&_nOther<8))
+        fprintf(stderr,"[di] mix tot=%u inq=%u stop=%u read=%u other=%u lastOther=0x%08X c0=0x%08X\n",
+          _nTot,_nInq,_nStop,_nRead,_nOther,_lastOther,c0); }
     if(c0 == 0x12000000u && cmd->dma && !cmd->write && cmd->dma_length){
         // DVDLowInquiry: 32-byte DVDDriveInfo struct (dolsdk2001 dvd.h:
         // u16 revision, u16 deviceCode, u32 releaseDate, u8 pad[24]).
@@ -145,11 +154,32 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
             memset(d+8, 0, 24);
         }
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec INQUIRY -> guest 0x%08X\n", cmd->dma_address); _n++; } }
-        // The SDK completion callback (r4 at 16A38 entry, 0x80018D1C) sets
-        // the RAM flag r13-31592=1 that the 16018 waiter checks. Queue it
-        // through the HLE callback trampoline: pc=callback, lr=RETURN.
-        // Callback address was captured at queue time (see 16A38 probe).
-        dol_hle_queue_guest_callback(0x80018D1Cu, 0, 0);
+        // Completion signal: the 15FC0/16018 waiter polls DI status itself
+        // (0xCC006000) and invokes the stored callback via its own blrl at
+        // 16270 with r3=r29. The old code ALSO dispatched 0x80018D1C through
+        // the HLE trampoline => double invocation per command => the
+        // inq/stop retry loop (2000 cmds, 0 reads). Now just raise the flag
+        // the waiter checks (r13-31592=1, set at 16018->ori r29,8), the way
+        // the parked DI-interrupt handler would have. TCINT is already set
+        // by dol_di_complete_command via the COMPLETE return below.
+        { u32 fa = cmd->cpu->gpr[13] - 31592u;
+          if(fa >= GC_RAM_BASE && fa + 4 <= GC_RAM_BASE + cmd->cpu->ram_size){
+            uint8_t* p = cmd->cpu->ram + (fa - GC_RAM_BASE);
+            p[0]=0; p[1]=0; p[2]=0; p[3]=1;
+            { static int _m=0; if(_m<3){ fprintf(stderr,"[di] INQUIRY flag r13-31592=1 (r13=0x%08X)\n", cmd->cpu->gpr[13]); _m++; } }
+          } }
+        // SDK completion signature: DVDLowCallback(s32 result, DVDCommandBlock
+        // *block) => r3=result (0=OK), r4=block. The old code passed r4=0, so
+        // the 18D1C body could never advance the block state (tag stayed 14
+        // => 18CC8 re-issued inquiry forever). Block addr comes from the
+        // r13-31488 current-block global (0x8015BF20 per 16A38 probe).
+        { u32 ba = cmd->cpu->gpr[13] - 31488u; u32 block = 0x8015BF20u;
+          if(ba >= GC_RAM_BASE && ba + 4 <= GC_RAM_BASE + cmd->cpu->ram_size){
+            uint8_t* p = cmd->cpu->ram + (ba - GC_RAM_BASE);
+            block = ((u32)p[0]<<24)|((u32)p[1]<<16)|((u32)p[2]<<8)|p[3];
+            if(block < GC_RAM_BASE) block = 0x8015BF20u;
+          }
+          dol_hle_queue_guest_callback(0x80018D1Cu, 0, (s32)block); }
         return DOL_DI_COMMAND_COMPLETE;
     }
     // Motor/stop/reset class (dolsdk2001 DVDLowStopMotor 0xE3, Reset etc.):
@@ -610,6 +640,21 @@ void recomp_run_slice(void){
         // BE5C/BE60 reads the OS global at 0x800000D4, owned by the guest;
         // seeding it corrupts the OSContext chain. Let the guest write it.)
         else if(pc==0x80011160u) poke32_set(g_cpu.gpr[13]-31684u, 1u);
+        // Bounded DVD state-machine probes (remove once M2 answered):
+        // 189FC = completion dispatcher (r3=cmd block, +8=type tag);
+        // 16018 = waiter flag check; 18CEC = inquiry re-issue site.
+        if(pc==0x800189FCu){ static int _n=0; if(_n<8){ _n++;
+            u32 b=g_cpu.gpr[3]; u32 tag=0; if(b>=GC_RAM_BASE && b+12<=GC_RAM_BASE+g_cpu.ram_size) tag=((u32)g_cpu.ram[b-GC_RAM_BASE+8]<<24)|((u32)g_cpu.ram[b-GC_RAM_BASE+9]<<16)|((u32)g_cpu.ram[b-GC_RAM_BASE+10]<<8)|g_cpu.ram[b-GC_RAM_BASE+11];
+            u32 r13=g_cpu.gpr[13];
+            u32 s48=0,s60=0,cb=0; if(r13-31568u>=GC_RAM_BASE && r13-31448u+4<=GC_RAM_BASE+g_cpu.ram_size){ uint8_t* m=g_cpu.ram+(r13-31568u-GC_RAM_BASE); s48=((u32)m[0]<<24)|((u32)m[1]<<16)|((u32)m[2]<<8)|m[3]; uint8_t* m2=g_cpu.ram+(r13-31460u-GC_RAM_BASE); s60=((u32)m2[0]<<24)|((u32)m2[1]<<16)|((u32)m2[2]<<8)|m2[3]; uint8_t* m3=g_cpu.ram+(r13-31488u-GC_RAM_BASE); cb=((u32)m3[0]<<24)|((u32)m3[1]<<16)|((u32)m3[2]<<8)|m3[3]; }
+            fprintf(stderr,"[dvdsm] 189FC block=0x%08X tag=%u st-31568=%u drv-31460=%u cb-31488=0x%08X lr=0x%08X\n", b, tag, s48, s60, cb, g_cpu.lr);
+            // Jump-table target: table base 0x80124018 (lis -32750 +16408),
+            // entry = mem32(base + tag*4). Tells which case row tag 14 hits.
+            { u32 base=0x80124018u, tgt=0; if(base>=GC_RAM_BASE && base+64*4<=GC_RAM_BASE+g_cpu.ram_size){ uint8_t* m=g_cpu.ram+(base-GC_RAM_BASE)+tag*4; tgt=((u32)m[0]<<24)|((u32)m[1]<<16)|((u32)m[2]<<8)|m[3]; }
+              static int _k=0; if(_k<2){ _k++; fprintf(stderr,"[dvdsm] 189FC tag=%u -> target=0x%08X\n", tag, tgt); } } } }
+        if(pc==0x80016018u){ static int _n=0; if(_n<8){ _n++;
+            u32 r13=g_cpu.gpr[13]; u32 fl=0; if(r13-31592u>=GC_RAM_BASE && r13-31592u+4<=GC_RAM_BASE+g_cpu.ram_size){ uint8_t* m=g_cpu.ram+(r13-31592u-GC_RAM_BASE); fl=((u32)m[0]<<24)|((u32)m[1]<<16)|((u32)m[2]<<8)|m[3]; }
+            fprintf(stderr,"[dvdsm] 16018 flag-31592=%u DIstatus=0x%08X lr=0x%08X\n", fl, s_di.status, g_cpu.lr); } }
 
         else if(pc==0x8001AF8Cu){ uint32_t v=g_cpu.gpr[30]; if(v==0) v=1; poke32_set(g_cpu.gpr[13]-31388u, v); }
         // GXRuntime VI retrace drive: 1 block dispatch = 1 work unit.
