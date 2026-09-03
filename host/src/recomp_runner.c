@@ -634,14 +634,15 @@ void recomp_run_slice(void){
             if(dol_hle_handle_callback_return(&g_cpu, pc)) continue;
         }
         if(dol_hle_poll_callback(&g_cpu)) continue;
-        // First-dispatch trace: log each never-before-dispatched pc once
-        // (cap 384: first wave = OS/alloc/table init; second wave should be
-        // table users -> asset loads -> GX). The [bt] backchain shows where,
-        // this shows what is new. GX-family entry is the M3 signal.
-        { static uint32_t _seen[384]; static int _nseen=0;
+        // First-dispatch trace: log each never-before-dispatched pc once.
+        // Ring of last 64 + ever-total: early boot saturates any first-N
+        // cap (384 unique in minutes), so keep a sliding window over the
+        // frontier instead. GX-family entry is the M3 signal.
+        { static uint32_t _seen[2048]; static int _nseen=0; static int _logged=0;
           int _f=0; for(int _i=0;_i<_nseen;_i++) if(_seen[_i]==pc){ _f=1; break; }
-          if(!_f && _nseen<384){ _seen[_nseen++]=pc;
-            fprintf(stderr,"[new] pc=0x%08X lr=0x%08X (%d total)\n", pc, g_cpu.lr, _nseen); } }
+          if(!_f){ if(_nseen<2048) _seen[_nseen++]=pc;
+            if(_logged<384 || (_nseen % 16)==0){ _logged++;
+              fprintf(stderr,"[new] pc=0x%08X lr=0x%08X (uniq=%d logged=%d)\n", pc, g_cpu.lr, _nseen, _logged); } } }
         if(!dolrecomp_call(&g_cpu, pc)){
             if(g_cpu.exception==0){
                 static int miss_cnt=0;
