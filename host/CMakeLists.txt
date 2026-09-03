@@ -64,6 +64,7 @@ set(GXRUNTIME_SOURCES
     ${GXRUNTIME_DIR}/src/event_clock.c
     ${GXRUNTIME_DIR}/src/di.c
     ${GXRUNTIME_DIR}/src/dvd.c
+    ${GXRUNTIME_DIR}/src/si.c
 )
 
 add_library(recomp_core STATIC

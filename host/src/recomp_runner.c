@@ -16,6 +16,7 @@
 #include "gxruntime/vi_clock.h"
 #include "gxruntime/di.h"
 #include "gxruntime/dvd.h"
+#include "gxruntime/si.h"
 
 static CPUState g_cpu;
 static int g_inited = 0;
@@ -58,6 +59,7 @@ static DolMmioBus s_mmio_bus;
 static DolInterrupts s_interrupts;
 static DolViClock s_vi_clock;
 static DolDi s_di;
+static DolSiDevice s_si;
 static int s_chassis_inited = 0;
 static int s_disc_present_logged = 0;
 static uint64_t s_ext_deliveries = 0; // external-interrupt deliveries to guest
@@ -82,6 +84,20 @@ static bool chassis_di_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* val
     // Level-triggered DI source follows the device model.
     dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DI, dol_di_interrupt_pending(&s_di));
     (void)cpu;
+    return true;
+}
+static bool chassis_si_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* value){
+    (void)user; (void)cpu;
+    if(!dol_si_mmio_contains(ea)) return false;
+    if(value) *value = dol_si_mmio_read(&s_si, ea, size);
+    dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_SI, dol_si_interrupt_pending(&s_si));
+    return true;
+}
+static bool chassis_si_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value){
+    (void)user; (void)cpu;
+    if(!dol_si_mmio_contains(ea)) return false;
+    dol_si_mmio_write(&s_si, ea, (u8)size, value);
+    dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_SI, dol_si_interrupt_pending(&s_si));
     return true;
 }
 static bool chassis_di_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value){
@@ -148,6 +164,17 @@ static void chassis_init(void){
     dol_mmio_bus_register(&s_mmio_bus, 0xCC003000u, 0x40u, chassis_vi_read, chassis_vi_write, NULL);
     dol_mmio_bus_register(&s_mmio_bus, 0xCC00100Au, 2u, chassis_vi_read, chassis_vi_write, NULL);
     dol_mmio_bus_register(&s_mmio_bus, 0xCC006000u, 0x28u, chassis_di_read, chassis_di_write, NULL);
+    { extern bool chassis_si_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* value);
+      extern bool chassis_si_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value);
+      dol_si_init(&s_si);
+      dol_mmio_bus_register(&s_mmio_bus, 0xCC006400u, 0x100u, chassis_si_read, chassis_si_write, NULL); }
+    // Bootstrapping: the SDK enables TCINT (transfer-complete) interrupt
+    // delivery before issuing reads. Until the guest programs the mask
+    // itself, pre-enable it so the first inquiry completion is observable
+    // at PI cause as well as DI status (both are level-triggered; the
+    // guest ack clears them per the write-1-to-clear model).
+    dol_interrupts_mmio_write(&s_interrupts, 0xCC006000u, 4u,
+        DOL_DI_STATUS_TCINTMASK | DOL_DI_STATUS_DEINTMASK);
     // Open the disc image once so DMA reads have backing bytes.
     // dvd_open_image is idempotent (first success wins). Candidates: the
     // extracted fst.bin's siblings first (boot.bin/bi2.bin live next to a
@@ -494,6 +521,8 @@ void recomp_run_slice(void){
             while(dol_vi_clock_pop_retrace(&s_vi_clock, &ticks)){
                 g_cpu.timebase += ticks;
                 dol_interrupts_assert_vi_retrace(&s_interrupts);
+                dol_si_latch_poll(&s_si, 0xFu);
+                dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_SI, dol_si_interrupt_pending(&s_si));
             }
             chassis_deliver_external();
         }
