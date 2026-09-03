@@ -11,6 +11,7 @@ int recomp_inited(void);
 uint32_t recomp_gp_bytes(void);
 uint32_t recomp_frames(void);
 uint64_t recomp_mmio_reads(void);
+void recomp_flush_gp(void);
 #ifdef __cplusplus
 }
 #endif

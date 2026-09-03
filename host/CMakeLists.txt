@@ -50,17 +50,30 @@ if(NOT FZERO_HOST_GX_NULL)
     endif()
 endif()
 
-file(GLOB RECOMP_DOL_CHUNKS "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp_all/generated/dol/generated/chunks/*.c")
+file(GLOB_RECURSE RECOMP_DOL_CHUNKS "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp_all/generated/chunks/*.c")
+file(GLOB RECOMP_DOL_CHUNKS_FB "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp_all/generated/dol/generated/chunks/*.c")
+list(APPEND RECOMP_DOL_CHUNKS ${RECOMP_DOL_CHUNKS_FB})
+
+# GXRuntime chassis (C-only, no Aurora): real VI/PI interrupt model + retrace clock
+set(GXRUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/RingOut/ModernGekko/vendor/dolphin/GXRuntime")
+set(GXRUNTIME_SOURCES
+    ${GXRUNTIME_DIR}/src/mmio_bus.c
+    ${GXRUNTIME_DIR}/src/interrupts.c
+    ${GXRUNTIME_DIR}/src/vi_clock.c
+    ${GXRUNTIME_DIR}/src/event_clock.c
+)
 
 add_library(recomp_core STATIC
     src/gx_fifo_bridge.c
     src/recomp_runner.c
     ../vendor/RingOut/DolRecomp/src/cpu/cpu.c
+    ${GXRUNTIME_SOURCES}
     ${RECOMP_DOL_CHUNKS}
 )
 target_include_directories(recomp_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/RingOut/DolRecomp/src"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp_all/generated/dol/generated"
+    "${GXRUNTIME_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp_all/generated"
 )
 target_compile_definitions(recomp_core PRIVATE _CRT_SECURE_NO_WARNINGS)
 

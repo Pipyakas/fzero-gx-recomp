@@ -78,7 +78,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE pi, PWSTR cmd, int show) {
             if(msg.message==WM_QUIT) goto done;
             TranslateMessage(&msg); DispatchMessageW(&msg);
         }
-        if(recomp_inited()) recomp_run_slice();
+        if(recomp_inited()){ recomp_run_slice(); recomp_flush_gp(); }
         if(GetTickCount()-lastTitle>300){
             lastTitle=GetTickCount();
             uint32_t gb=recomp_gp_bytes(), fr=recomp_frames();
