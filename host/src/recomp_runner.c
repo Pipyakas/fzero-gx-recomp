@@ -452,12 +452,22 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // chunk runs them natively mid-chain). Same visibility as slice-loop
     // if() probes. Mid-chain state is only observable via consulting the
     // post-lap effect at the next dispatched pc (see [ins] post-lap).
-    // 16920 = DVD stop-motor wrapper entry (lr=18CF0/1923C per backchain).
-    // r30 at entry vs at 1698C-AE94 tells whether r30 is an IN-arg (caller
-    // set) or manufactured inside (16970 mulli). Dump r3/r30/r31 + timebase.
+    // 16920 = DVD stop-motor wrapper entry (lr=1923C: called from INSIDE
+    // the 18D1C completion path at 19238). r30 arrives SET (fzBR) — but the
+    // whole 18D1C body runs native from ONE dispatch, so r30 at 16920 entry
+    // is whatever 18D1C carried in ITS r30. Probe 18D1C entry (dispatched,
+    // chunk_5 entry): r30 there is the callback's incoming r30.
     if(addr==0x80016920u){
       static unsigned _m=0; if(++_m<=6) fprintf(stderr,"[watch] 16920 r3=0x%08X r30=0x%08X r31=0x%08X tb=0x%llX lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->gpr[30], cpu->gpr[31], (unsigned long long)cpu->timebase, cpu->lr, _m);
+      return false; }
+    // 18D1C = low-level completion entry (dispatched). fzBT: r30 IDENTICAL
+    // at 18D1C and 16920 (0x1823CF40) — rides in on the SAVED slice context
+    // (trampoline preempts AC34 with garbage r30). Only r3/r4 are args.
+    // Fix (fzBU): zero the callback's non-arg regs at poll time.
+    if(addr==0x80018D1Cu){
+      static unsigned _d=0; if(++_d<=6) fprintf(stderr,"[watch] 18D1C r3=0x%08X r4=0x%08X r30=0x%08X r31=0x%08X tb=0x%llX lr=0x%08X (#%u)\n",
+        cpu->gpr[3], cpu->gpr[4], cpu->gpr[30], cpu->gpr[31], (unsigned long long)cpu->timebase, cpu->lr, _d);
       return false; }
     // Re-walk key probe (fzBJ): AD60 publishes head=r29 then AD68 rebuilds
     // the search key from the NEW node (r6=[r29+12], r0=[r29+8]).
@@ -723,15 +733,21 @@ void recomp_run_slice(void){
         // 19690 = parent that calls 19700->187CC sink (dispatch chain
         // 19690->19700->187CC->19FA4?->...->189FC->18CC8->16A38). Read-only:
         // dump block[8] (tag), block[12] (state), r13 vars, and lr.
+        // fzBX correction: 1970C/16970 are mid-chain natives (no downcount)
+        // that never dispatch — probes removed. 19700 shows r30=0x8015BF00
+        // (block ptr, from 19690's r3 arg chain), so r30 ENTERS 18D1C's
+        // native body as the block pointer; the 16970 mulli then derives the
+        // search key from the 1142C timebase latch. Key question answered:
+        // key = f(timebase), not f(block) — timebase cadence sets the key.
         if(pc==0x80019690u||pc==0x80019700u||pc==0x800187CCu){
           static unsigned _w1=0,_w2=0,_w3=0;
           unsigned *c = pc==0x80019690u?&_w1:pc==0x80019700u?&_w2:&_w3; (*c)++;
           if(*c<=4){ u32 tag=0xDEADu,st=0xDEADu,s48=0,s60=0,cb=0;
             guest_read32(0x8015BF20u+8u, &tag); guest_read32(0x8015BF20u+12u, &st);
             guest_read32(g_cpu.gpr[13]-31568u, &s48); guest_read32(g_cpu.gpr[13]-31460u, &s60); guest_read32(g_cpu.gpr[13]-31488u, &cb);
-            fprintf(stderr,"[dvdsm] %s r3=0x%08X r31=0x%08X tag=%u st=%u s48=%u drv=%u curblk=0x%08X lr=0x%08X (#%u)\n",
+            fprintf(stderr,"[dvdsm] %s r3=0x%08X r30=0x%08X r31=0x%08X tag=%u st=%u s48=%u drv=%u curblk=0x%08X lr=0x%08X (#%u)\n",
               pc==0x80019690u?"19690":pc==0x80019700u?"19700":"187CC",
-              g_cpu.gpr[3], g_cpu.gpr[31], tag, st, s48, s60, cb, g_cpu.lr, *c); }
+              g_cpu.gpr[3], g_cpu.gpr[30], g_cpu.gpr[31], tag, st, s48, s60, cb, g_cpu.lr, *c); }
           if((*c%20000)==0) fprintf(stderr,"[dvdsm] sinkchain 19690=%u 19700=%u 187CC=%u\n", _w1,_w2,_w3); }
         // 18F38 = result-bit branch; 18E68 = drive-state branch; 1920C = alt path.
         // Uncapped counters + first-few dumps: which callback path executes?
