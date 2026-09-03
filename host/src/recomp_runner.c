@@ -443,8 +443,9 @@ static int load_dol(const char* path, CPUState* cpu) {
         memcpy(dst, buf+offs[i], sizes[i]);
     }
     #define POKE32(a,v) do{ uint32_t _a=(a); if(_a>=GC_RAM_BASE){ uint32_t _o=_a-GC_RAM_BASE; if(_o+4<=cpu->ram_size) write_be32(cpu->ram+_o,(v)); } }while(0)
+    uint32_t arena_lo = 0;
     {
-        uint32_t arena_lo = (bss_addr + bss_size + 0x20000u + 31u) & ~31u;
+        arena_lo = (bss_addr + bss_size + 0x20000u + 31u) & ~31u;
         if(arena_lo < GC_RAM_BASE || arena_lo > 0x817FEC60u) arena_lo = bss_addr ? bss_addr : GC_RAM_BASE;
         POKE32(0x80000020u, 0x0D15EA5Eu); POKE32(0x80000024u, 1u); POKE32(0x80000028u, 0x01800000u);
         POKE32(0x8000002Cu, 1u); POKE32(0x80000030u, arena_lo); POKE32(0x80000034u, 0x817FEC60u);
@@ -456,6 +457,41 @@ static int load_dol(const char* path, CPUState* cpu) {
         cpu->gpr[1] = 0x817FFF00u; POKE32(0x817FFF00u, 0u); POKE32(0x817FFF04u, 0u);
     }
     #undef POKE32
+    // IPL handoff: synthesize the initial thread the apploader hands the
+    // DOL. 0x800000E4 (__gCurrentThread, dolsdk2001 os.h:55) must point at
+    // a valid OSThread (context @0x0 size 0x2C8, state @0x2C8u16=RUNNING(2),
+    // priority @0x2D0, stackEnd @0x308). Placed in the 128KB stack-reserve
+    // gap below arena_lo so OSInit's arena clear cannot wipe it; stack top
+    // stays 0x817FFF00 above arena_hi as before.
+    {
+        uint32_t tbase = (arena_lo - 0x1000u) & ~31u; // 4KB thread struct
+        uint32_t stack_top = 0x817FFF00u;
+        if(tbase >= GC_RAM_BASE && tbase + 0x1000 <= GC_RAM_BASE + cpu->ram_size){
+            uint8_t* t = cpu->ram + (tbase - GC_RAM_BASE);
+            memset(t, 0, 0x1000);
+            // OSContext: srr0=entry (resume here), msr=FP, state=FPSAVED|EXC.
+            // state field @0x1A2 is u16: FPSAVED(0x01 per dolsdk2001 OSContext.h:135).
+            t[0x198]=(uint8_t)(entry>>24); t[0x199]=(uint8_t)(entry>>16);
+            t[0x19A]=(uint8_t)(entry>>8); t[0x19B]=(uint8_t)entry;
+            t[0x19C]=0; t[0x19D]=0; t[0x19E]=0x20; t[0x19F]=0; // msr FP
+            t[0x1A2]=0; t[0x1A3]=0x01; // FPSAVED
+            // gpr1 in context @0x04 = stack top
+            t[0x04]=(uint8_t)(stack_top>>24); t[0x05]=(uint8_t)(stack_top>>16);
+            t[0x06]=(uint8_t)(stack_top>>8); t[0x07]=(uint8_t)stack_top;
+            // OSThread: state=RUNNING(2) @0x2C8, priority @0x2D0/@0x2D4,
+            // stackBase @0x304, stackEnd @0x308, queue=NULL @0x2DC.
+            t[0x2C8]=0; t[0x2C9]=2;
+            t[0x2D0]=0; t[0x2D1]=16; // priority 16 (normal)
+            t[0x2D4]=0; t[0x2D5]=16;
+            t[0x304]=(uint8_t)(stack_top>>24); t[0x305]=(uint8_t)(stack_top>>16);
+            t[0x306]=(uint8_t)(stack_top>>8); t[0x307]=(uint8_t)stack_top;
+            t[0x308]=(uint8_t)(stack_top>>24); t[0x309]=(uint8_t)(stack_top>>16);
+            t[0x30A]=(uint8_t)(stack_top>>8); t[0x30B]=(uint8_t)stack_top;
+            if(0x800000E4u >= GC_RAM_BASE && 0x800000E4u + 4 <= GC_RAM_BASE + cpu->ram_size)
+                write_be32(cpu->ram + (0x800000E4u - GC_RAM_BASE), tbase);
+            fprintf(stderr,"[boot] initial thread @0x%08X (E4 set, RUNNING prio16)\n", tbase);
+        }
+    }
     cpu->pc = entry;
     cpu->msr = 0x00002000u;
     cpu->hid2 |= 0xB0000000u;
