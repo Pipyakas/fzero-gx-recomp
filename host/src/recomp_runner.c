@@ -179,38 +179,32 @@ static void hle_fallback(CPUState* cpu, uint32_t raw, uint32_t cia){
     ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
 }
 static bool hle_host_call(CPUState* cpu, uint32_t addr){
+    // NOTE 800102AC is NOT DVDGetFSTLocation: it reads low-mem 0x800000E4
+    // (an OSArena/OS-context word) and returns. Keep the FST install here
+    // only as a side effect; do NOT skip the body — let it run so r3 and
+    // the low-mem word stay guest-coherent.
     if(addr==0x800102ACu){
-        // Real FST from the extracted tree (orig/GFZE01/files): walk it,
-        // build a multi-entry FST blob at 0x81200000 (dirs + files + strings),
-        // mirror base to low-mem 0x38/0xE4, return base in r3.
-        // Falls back to the old one-entry stub only if the tree is missing.
+        // Install the real fst.bin blob at 0x81200000 as a SIDE EFFECT ONLY
+        // (first call wins; the blob persists in guest RAM), then let the
+        // guest body run so r3/low-mem stay guest-coherent. Skipping the
+        // body (blr) was wrong: 102AC is a low-mem reader (0x800000E4),
+        // not DVDGetFSTLocation.
         extern int dvd_build_fst_from_tree(uint8_t* ram, unsigned ram_size, unsigned base);
-        if(cpu->ram_size >= 0x1200010u){
-            uint32_t base=0x81200000u; uint32_t off=base - GC_RAM_BASE;
-            if(off+16 <= cpu->ram_size){
-                int n = dvd_build_fst_from_tree(cpu->ram, cpu->ram_size, base);
-                if(n > 0){
-                    write_be32(cpu->ram + (0x80000038u - GC_RAM_BASE), base);
-                    write_be32(cpu->ram + (0x800000E4u - GC_RAM_BASE), base);
-                    cpu->gpr[3]=base;
-                    g_cpu.pc=g_cpu.lr & ~3u;
-                    { static int _fl=0; if(_fl<2){ fprintf(stderr,"[dvd] FST entries=%d base=0x%08X\n", n, base); _fl++; } }
-                    return true;
-                }
-                write_be32(cpu->ram + (0x80000038u - GC_RAM_BASE), base);
-                write_be32(cpu->ram + (0x800000E4u - GC_RAM_BASE), base);
-                write_be32(cpu->ram + off + 0, 0x01000000u);
-                write_be32(cpu->ram + off + 4, 0u);
-                write_be32(cpu->ram + off + 8, 0x00000001u);
-                write_be32(cpu->ram + off + 12, 0u);
-                cpu->gpr[3]=base;
-                g_cpu.pc=g_cpu.lr & ~3u;
-                return true;
-            }
-        }
-        cpu->gpr[3]=0;
-        g_cpu.pc=g_cpu.lr & ~3u;
-        return true;
+        { static int _done=0;
+          if(!_done){
+              _done=1;
+              if(cpu->ram_size >= 0x1200010u){
+                  uint32_t base=0x81200000u; uint32_t off=base - GC_RAM_BASE;
+                  if(off+16 <= cpu->ram_size){
+                      int n = dvd_build_fst_from_tree(cpu->ram, cpu->ram_size, base);
+                      if(n > 0){
+                          write_be32(cpu->ram + (0x80000038u - GC_RAM_BASE), base);
+                          fprintf(stderr,"[dvd] FST entries=%d base=0x%08X (side effect @0x800102AC)\n", n, base);
+                      }
+                  }
+              }
+          } }
+        return false; // do NOT skip: run the recompiled body
     }
     return false;
 }
@@ -253,7 +247,10 @@ static int load_dol(const char* path, CPUState* cpu) {
         if(arena_lo < GC_RAM_BASE || arena_lo > 0x817FEC60u) arena_lo = bss_addr ? bss_addr : GC_RAM_BASE;
         POKE32(0x80000020u, 0x0D15EA5Eu); POKE32(0x80000024u, 1u); POKE32(0x80000028u, 0x01800000u);
         POKE32(0x8000002Cu, 1u); POKE32(0x80000030u, arena_lo); POKE32(0x80000034u, 0x817FEC60u);
-        POKE32(0x80000038u, 0u); POKE32(0x800000D4u, 0x80003000u); POKE32(0x8000003Cu, 0u); POKE32(0x800000CCu, 0u);
+        POKE32(0x80000038u, 0u); POKE32(0x8000003Cu, 0u); POKE32(0x800000CCu, 0u);
+        // NOTE: 0x800000D4 is owned by the guest OS (OSContext pointer set by
+        // __OSInit / OSInitThreadQueue). Do NOT pre-seed it: 102AC reads this
+        // word and the boot PSL would diverge from hardware.
         POKE32(0x800000F8u, 0x09A7EC80u); POKE32(0x800000FCu, 0x1CF7C580u);
         cpu->gpr[1] = 0x817FFF00u; POKE32(0x817FFF00u, 0u); POKE32(0x817FFF04u, 0u);
     }
@@ -362,7 +359,9 @@ void recomp_run_slice(void){
         else if(pc==0x8000A990u) g_cpu.gpr[26]=16;
         else if(pc==0x80010718u) poke32_set(g_cpu.gpr[13]-31688u, 1u);
         else if(pc==0x80010624u && g_cpu.gpr[6]==0) g_cpu.gpr[6]=1;
-        else if(pc==0x8000BE60u) write_be32(g_cpu.ram + (0x800000D4u - GC_RAM_BASE), 0x80003000u);
+        // (was: 0x8000BE60 spoofed low-mem 0xD4=0x80003000 — removed.
+        // BE5C/BE60 reads the OS global at 0x800000D4, owned by the guest;
+        // seeding it corrupts the OSContext chain. Let the guest write it.)
         else if(pc==0x80011160u) poke32_set(g_cpu.gpr[13]-31684u, 1u);
 
         else if(pc==0x8001AF8Cu){ uint32_t v=g_cpu.gpr[30]; if(v==0) v=1; poke32_set(g_cpu.gpr[13]-31388u, v); }
