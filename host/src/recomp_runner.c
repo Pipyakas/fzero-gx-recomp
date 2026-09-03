@@ -507,7 +507,10 @@ static void log_backchain(void){
 static uint64_t s_slice_n = 0;
 void recomp_run_slice(void){
     if(!g_inited) return;
-    g_cpu.timebase += 486000000ULL/240;
+    // Deterministic timebase: 675000 ticks per VI retrace ONLY (driven from
+    // the vi_clock below). The old wall-clock bump (486M/240 per slice) made
+    // identical runs diverge by host speed. Removed per PLAN M0.
+    (void)0;
     for(int i=0;i<16384;i++){
 
         if(g_cpu.exception){
@@ -539,7 +542,7 @@ void recomp_run_slice(void){
         else if(pc==0x80010608u && g_cpu.gpr[6]==0) g_cpu.gpr[6]=1;
         if(pc==0x800113B8u && g_cpu.ctr>8) g_cpu.ctr=1;
         else if(pc==0x800034E4u && g_cpu.gpr[3]>256u) g_cpu.gpr[3]=256u;
-        else if(pc==0x80011424u) g_cpu.timebase += 5000;
+        // (was: 0x80011424 timebase += 5000 wall-clock hack — removed per M0.)
         if(pc==0x8000B450u) poke16_set(g_cpu.gpr[31], 0x0020u);
         else if(pc==0x8000B498u) poke16_set(g_cpu.gpr[31], 0x0020u);
         else if(pc==0x8000B4B4u) poke16_clr(g_cpu.gpr[31], 0x0400u);
