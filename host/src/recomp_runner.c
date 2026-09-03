@@ -634,6 +634,15 @@ void recomp_run_slice(void){
             if(dol_hle_handle_callback_return(&g_cpu, pc)) continue;
         }
         if(dol_hle_poll_callback(&g_cpu)) continue;
+        // First-dispatch trace: log each never-before-dispatched pc once
+        // (cap 96). Shows the boot frontier as new functions, not loop
+        // headers — the [bt] backchain shows where, this shows what is new.
+        // GX-family entry is the M3 signal: any first dispatch into
+        // GXInit/GXSetArray/GXBegin-class addresses or 0xCC008000 stores.
+        { static uint32_t _seen[96]; static int _nseen=0;
+          int _f=0; for(int _i=0;_i<_nseen;_i++) if(_seen[_i]==pc){ _f=1; break; }
+          if(!_f && _nseen<96){ _seen[_nseen++]=pc;
+            fprintf(stderr,"[new] pc=0x%08X lr=0x%08X (%d total)\n", pc, g_cpu.lr, _nseen); } }
         if(!dolrecomp_call(&g_cpu, pc)){
             if(g_cpu.exception==0){
                 static int miss_cnt=0;
