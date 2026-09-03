@@ -357,6 +357,14 @@ static void hle_fallback(CPUState* cpu, uint32_t raw, uint32_t cia){
     ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
 }
 static bool hle_host_call(CPUState* cpu, uint32_t addr){
+    // Read-only probe: log 16A38 (DI inquiry wrapper) entry regs to learn
+    // the command-block pointer + callback. Touches nothing (returns false).
+    if(addr==0x80016A38u){
+        static int _n=0;
+        if(_n<6){ fprintf(stderr,"[di] 16A38 entry r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X lr=0x%08X\n",
+            cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7], cpu->lr); _n++; }
+        return false;
+    }
     // NOTE 800102AC is NOT DVDGetFSTLocation: it reads low-mem 0x800000E4
     // (an OSArena/OS-context word) and returns. Keep the FST install here
     // only as a side effect; do NOT skip the body — let it run so r3 and
