@@ -127,6 +127,16 @@ bool dol_hle_poll_callback(CPUState* cpu) {
 
     save_callback_context(&g_callback_context, cpu);
     g_callback_active = true;
+    // fzBU: the callback's NON-ARG regs must match what the preempted slice
+    // had — EXCEPT r30/r31, which the native 18D1C body reads (16984 r6=r30,
+    // 16960 r31=...) as *its own locals* without ever writing them first.
+    // In real hardware the callback runs on the thread that issued the
+    // command, whose r30/r31 hold that thread's values — not the allocator's
+    // leftovers (0x1823CF40) from a preempted AC34 slice. Zero r30/r31 only;
+    // everything else restores exactly (post-lap SELF-link came from stale
+    // r30; keep the slice's other regs intact, including r1/sp).
+    cpu->gpr[30] = 0;
+    cpu->gpr[31] = 0;
     cpu->gpr[3] = pending.r3;
     cpu->gpr[4] = pending.r4;
     cpu->pc = pending.address;
