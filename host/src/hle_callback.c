@@ -15,8 +15,8 @@
 
 typedef struct {
     u32 address;
-    s32 channel;
-    s32 result;
+    u32 r3;
+    u32 r4;
 } HlePendingCallback;
 
 typedef struct {
@@ -100,7 +100,9 @@ static void restore_callback_context(CPUState* cpu, const HleSavedContext* saved
     cpu->reserve_valid = saved->reserve_valid;
 }
 
-bool dol_hle_queue_guest_callback(u32 address, s32 channel, s32 result) {
+// Args are raw guest registers: queue(address, r3, r4). (Renamed from
+// channel/result: DVD completion needs r3=result + r4=block pointer.)
+bool dol_hle_queue_guest_callback(u32 address, u32 r3, u32 r4) {
     if (address == 0)
         return true;
     if (g_callback_count == HLE_CALLBACK_QUEUE_CAPACITY) {
@@ -109,8 +111,8 @@ bool dol_hle_queue_guest_callback(u32 address, s32 channel, s32 result) {
     }
     u32 index = (g_callback_read + g_callback_count) % HLE_CALLBACK_QUEUE_CAPACITY;
     g_callback_queue[index].address = address;
-    g_callback_queue[index].channel = channel;
-    g_callback_queue[index].result = result;
+    g_callback_queue[index].r3 = r3;
+    g_callback_queue[index].r4 = r4;
     g_callback_count++;
     return true;
 }
@@ -125,14 +127,14 @@ bool dol_hle_poll_callback(CPUState* cpu) {
 
     save_callback_context(&g_callback_context, cpu);
     g_callback_active = true;
-    cpu->gpr[3] = (u32)pending.channel;
-    cpu->gpr[4] = (u32)pending.result;
+    cpu->gpr[3] = pending.r3;
+    cpu->gpr[4] = pending.r4;
     cpu->pc = pending.address;
     cpu->lr = HLE_CALLBACK_RETURN;
     cpu->exception = 0;
     cpu->program_exception = 0;
-    fprintf(stderr, "[cb] dispatch callback=0x%08X channel=%d result=%d\n",
-            pending.address, pending.channel, pending.result);
+    fprintf(stderr, "[cb] dispatch callback=0x%08X r3=0x%08X r4=0x%08X\n",
+            pending.address, pending.r3, pending.r4);
     return true;
 }
 

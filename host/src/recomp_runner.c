@@ -22,7 +22,7 @@
 // + card/ARAM/platform deps). Keep hle_abi.h out too (guest_memory dep);
 // this TU only needs the four callback functions + the return sentinel.
 #define HLE_CALLBACK_RETURN 0x7FFF0000u
-bool dol_hle_queue_guest_callback(u32 address, s32 channel, s32 result);
+bool dol_hle_queue_guest_callback(u32 address, u32 r3, u32 r4);
 bool dol_hle_poll_callback(CPUState* cpu);
 bool dol_hle_handle_callback_return(CPUState* cpu, u32 address);
 void dol_hle_init(const void* config);
@@ -121,6 +121,7 @@ static bool chassis_di_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 val
     dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DI, dol_di_interrupt_pending(&s_di));
     return true;
 }
+static bool guest_read32(uint32_t addr, uint32_t* out); // fwd: def after chassis_init (needs g_cpu)
 // DI command executor: serve DVD reads from the opened disc image.
 // Register map (dolsdk2001 dvdlow.c: __DIRegs[2..7] == DI COMMAND_0..DMA_LEN
 // + CONTROL): a DVDLowRead programs c0=0xA8000000, c1=(offset>>2),
@@ -163,23 +164,41 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         // the parked DI-interrupt handler would have. TCINT is already set
         // by dol_di_complete_command via the COMPLETE return below.
         { u32 fa = cmd->cpu->gpr[13] - 31592u;
-          if(fa >= GC_RAM_BASE && fa + 4 <= GC_RAM_BASE + cmd->cpu->ram_size){
+          if(fa >= GC_RAM_BASE && fa + 4u > fa && fa + 4u <= GC_RAM_BASE + cmd->cpu->ram_size){
             uint8_t* p = cmd->cpu->ram + (fa - GC_RAM_BASE);
             p[0]=0; p[1]=0; p[2]=0; p[3]=1;
             { static int _m=0; if(_m<3){ fprintf(stderr,"[di] INQUIRY flag r13-31592=1 (r13=0x%08X)\n", cmd->cpu->gpr[13]); _m++; } }
           } }
-        // SDK completion signature: DVDLowCallback(s32 result, DVDCommandBlock
-        // *block) => r3=result (0=OK), r4=block. The old code passed r4=0, so
-        // the 18D1C body could never advance the block state (tag stayed 14
-        // => 18CC8 re-issued inquiry forever). Block addr comes from the
-        // r13-31488 current-block global (0x8015BF20 per 16A38 probe).
-        { u32 ba = cmd->cpu->gpr[13] - 31488u; u32 block = 0x8015BF20u;
-          if(ba >= GC_RAM_BASE && ba + 4 <= GC_RAM_BASE + cmd->cpu->ram_size){
-            uint8_t* p = cmd->cpu->ram + (ba - GC_RAM_BASE);
-            block = ((u32)p[0]<<24)|((u32)p[1]<<16)|((u32)p[2]<<8)|p[3];
-            if(block < GC_RAM_BASE) block = 0x8015BF20u;
-          }
-          dol_hle_queue_guest_callback(0x80018D1Cu, 0, (s32)block); }
+        // SDK completion: DVDLowCallback(result, block). HLE poll sets
+        // gpr3=channel, gpr4=result, so queue channel=0 (result OK) and
+        // result=block pointer. Block addr from r13-31488 current-block
+        // global (0x8015BF20 per 16A38 probe). r3=0 takes the 18D68
+        // success path (18D20 early-out is only for r3==0x10 error).
+        { uint32_t block = 0x8015BF20u, cb = 0x80018D1Cu;
+          guest_read32(cmd->cpu->gpr[13]-31488u, &block);
+          if(block < GC_RAM_BASE) block = 0x8015BF20u;
+          guest_read32(block+40u, &cb);
+          // HLE poll sets gpr3=channel, gpr4=result: channel=0 (OK),
+          // result=block. Fall back to 18D1C (16A38's r4 per probe).
+          if(cb < GC_RAM_BASE && cb != 0) cb = 0x80018D1Cu;
+          // Mark the block complete the way the SDK's ISR would: state
+          // (offset 0x0C, == DVD_CB_STATE per hle_dvd.c) = END(0), transferred
+          // lengths at 0x1C/0x20. A374 checks block+12==0 for success; without
+          // this it always took the error path (flag=1) and re-issued.
+          { uint32_t ba2 = block + 12u;
+            if(ba2 >= GC_RAM_BASE && ba2 + 4u > ba2 && ba2 + 4u <= GC_RAM_BASE + cmd->cpu->ram_size){
+              uint8_t* p = cmd->cpu->ram + (ba2 - GC_RAM_BASE);
+              p[0]=0; p[1]=0; p[2]=0; p[3]=0;
+              uint32_t t1 = block + 28u, t2 = block + 32u; uint32_t len = cmd->dma_length;
+              if(t1+4u <= GC_RAM_BASE + cmd->cpu->ram_size && t2+4u <= GC_RAM_BASE + cmd->cpu->ram_size){
+                uint8_t* q1 = cmd->cpu->ram + (t1 - GC_RAM_BASE);
+                uint8_t* q2 = cmd->cpu->ram + (t2 - GC_RAM_BASE);
+                q1[0]=(uint8_t)(len>>24); q1[1]=(uint8_t)(len>>16); q1[2]=(uint8_t)(len>>8); q1[3]=(uint8_t)len;
+                q2[0]=(uint8_t)(len>>24); q2[1]=(uint8_t)(len>>16); q2[2]=(uint8_t)(len>>8); q2[3]=(uint8_t)len;
+              }
+              { static int _m=0; if(_m<2){ _m++; fprintf(stderr,"[di] INQUIRY blk=0x%08X state=END len=%u cb=0x%08X\n", block, len, cb); } }
+            } }
+          dol_hle_queue_guest_callback(cb, 0, block); }
         return DOL_DI_COMMAND_COMPLETE;
     }
     // Motor/stop/reset class (dolsdk2001 DVDLowStopMotor 0xE3, Reset etc.):
@@ -187,6 +206,14 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
     // advances instead of retrying down an error path.
     if((c0 & 0xFF000000u) == 0xE3000000u){
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec STOPMOTOR (complete)\n"); _n++; } }
+        // Same completion contract as inquiry: invoke the block's stored
+        // callback (+40 slot, blrl target per 18848-1885C pattern) with
+        // (result=0, block). Without it the stop waiter never advances and
+        // the machine falls back to re-issuing inquiry.
+        { u32 blk=0, cb=0; guest_read32(cmd->cpu->gpr[13]-31488u, &blk);
+          if(blk) guest_read32(blk+40u, &cb);
+          if(cb){ static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR cb=0x%08X blk=0x%08X\n", cb, blk); _m++; }
+            dol_hle_queue_guest_callback(cb, 0, blk); } }
         return DOL_DI_COMMAND_COMPLETE;
     }
     if((c0 & 0xFF000000u) == 0xA8000000u
@@ -302,6 +329,12 @@ static void chassis_init(void){
         dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DI, dol_di_interrupt_pending(&s_di));
     }
     s_chassis_inited = 1;
+}
+static bool guest_read32(uint32_t addr, uint32_t* out){
+    if(addr < GC_RAM_BASE || addr + 4u > GC_RAM_BASE + g_cpu.ram_size || addr + 4u < addr) return false;
+    uint8_t* p = g_cpu.ram + (addr - GC_RAM_BASE);
+    *out = ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
+    return true;
 }
 static uint32_t chassis_ctx_ptr(void){
     uint32_t a = GUEST_OS_CONTEXT_PTR_ADDR;
@@ -566,12 +599,12 @@ static void log_backchain(void){
     u32 sp = g_cpu.gpr[1];
     fprintf(stderr,"[bt] pc=0x%08X lr=0x%08X r1=0x%08X msr=0x%08X ctr=0x%08X:",
         g_cpu.pc, g_cpu.lr, sp, g_cpu.msr, g_cpu.ctr);
-    for(int f=0; f<8 && sp>=GC_RAM_BASE && sp+8u<GC_RAM_BASE+g_cpu.ram_size; f++){
-        u32 off = sp - GC_RAM_BASE;
-        u32 caller = ((u32)g_cpu.ram[off]<<24)|((u32)g_cpu.ram[off+1]<<16)|((u32)g_cpu.ram[off+2]<<8)|g_cpu.ram[off+3];
-        if(caller<=sp || caller<GC_RAM_BASE || caller+8u>=GC_RAM_BASE+g_cpu.ram_size) break;
-        u32 roff = caller - GC_RAM_BASE;
-        u32 ret = ((u32)g_cpu.ram[roff+4]<<24)|((u32)g_cpu.ram[roff+5]<<16)|((u32)g_cpu.ram[roff+6]<<8)|g_cpu.ram[roff+7];
+    for(int f=0; f<8; f++){
+        u32 caller = 0, ret = 0;
+        if(sp < GC_RAM_BASE || sp + 8u < sp || sp + 8u > GC_RAM_BASE+g_cpu.ram_size) break;
+        if(!guest_read32(sp, &caller)) break;
+        if(caller<=sp || caller+8u < caller || caller+8u > GC_RAM_BASE+g_cpu.ram_size) break;
+        if(!guest_read32(caller+4u, &ret)) break;
         fprintf(stderr," [0x%08X]", ret);
         sp = caller;
     }
@@ -644,17 +677,43 @@ void recomp_run_slice(void){
         // 189FC = completion dispatcher (r3=cmd block, +8=type tag);
         // 16018 = waiter flag check; 18CEC = inquiry re-issue site.
         if(pc==0x800189FCu){ static int _n=0; if(_n<8){ _n++;
-            u32 b=g_cpu.gpr[3]; u32 tag=0; if(b>=GC_RAM_BASE && b+12<=GC_RAM_BASE+g_cpu.ram_size) tag=((u32)g_cpu.ram[b-GC_RAM_BASE+8]<<24)|((u32)g_cpu.ram[b-GC_RAM_BASE+9]<<16)|((u32)g_cpu.ram[b-GC_RAM_BASE+10]<<8)|g_cpu.ram[b-GC_RAM_BASE+11];
-            u32 r13=g_cpu.gpr[13];
-            u32 s48=0,s60=0,cb=0; if(r13-31568u>=GC_RAM_BASE && r13-31448u+4<=GC_RAM_BASE+g_cpu.ram_size){ uint8_t* m=g_cpu.ram+(r13-31568u-GC_RAM_BASE); s48=((u32)m[0]<<24)|((u32)m[1]<<16)|((u32)m[2]<<8)|m[3]; uint8_t* m2=g_cpu.ram+(r13-31460u-GC_RAM_BASE); s60=((u32)m2[0]<<24)|((u32)m2[1]<<16)|((u32)m2[2]<<8)|m2[3]; uint8_t* m3=g_cpu.ram+(r13-31488u-GC_RAM_BASE); cb=((u32)m3[0]<<24)|((u32)m3[1]<<16)|((u32)m3[2]<<8)|m3[3]; }
+            u32 b=g_cpu.gpr[3]; u32 tag=0; guest_read32(b+8u, &tag);
+            u32 r13=g_cpu.gpr[13], s48=0, s60=0, cb=0;
+            guest_read32(r13-31568u, &s48); guest_read32(r13-31460u, &s60); guest_read32(r13-31488u, &cb);
             fprintf(stderr,"[dvdsm] 189FC block=0x%08X tag=%u st-31568=%u drv-31460=%u cb-31488=0x%08X lr=0x%08X\n", b, tag, s48, s60, cb, g_cpu.lr);
-            // Jump-table target: table base 0x80124018 (lis -32750 +16408),
-            // entry = mem32(base + tag*4). Tells which case row tag 14 hits.
-            { u32 base=0x80124018u, tgt=0; if(base>=GC_RAM_BASE && base+64*4<=GC_RAM_BASE+g_cpu.ram_size){ uint8_t* m=g_cpu.ram+(base-GC_RAM_BASE)+tag*4; tgt=((u32)m[0]<<24)|((u32)m[1]<<16)|((u32)m[2]<<8)|m[3]; }
-              static int _k=0; if(_k<2){ _k++; fprintf(stderr,"[dvdsm] 189FC tag=%u -> target=0x%08X\n", tag, tgt); } } } }
+            // Jump-table dump (one-shot) + tag histogram: which tags occur
+            // and which row each hits. Finds the row that re-issues inquiry.
+            { static int _k=0; if(_k<1){ _k++;
+                for(unsigned t=0;t<24;t++){ u32 tgt=0; guest_read32(0x80124018u+t*4u, &tgt);
+                  fprintf(stderr,"[dvdsm] jtab[%u] -> 0x%08X\n", t, tgt); } } }
+            { static unsigned _h[32]={0}; static unsigned _tot=0;
+              if(tag<32) _h[tag]++; _tot++;
+              if(_tot==16 || _tot%8192==0){ fprintf(stderr,"[dvdsm] tags tot=%u:", _tot);
+                for(unsigned t=0;t<24;t++) if(_h[t]) fprintf(stderr," %u:%u", t, _h[t]);
+                fprintf(stderr,"\n"); } } } }
         if(pc==0x80016018u){ static int _n=0; if(_n<8){ _n++;
-            u32 r13=g_cpu.gpr[13]; u32 fl=0; if(r13-31592u>=GC_RAM_BASE && r13-31592u+4<=GC_RAM_BASE+g_cpu.ram_size){ uint8_t* m=g_cpu.ram+(r13-31592u-GC_RAM_BASE); fl=((u32)m[0]<<24)|((u32)m[1]<<16)|((u32)m[2]<<8)|m[3]; }
+            u32 fl=0; guest_read32(g_cpu.gpr[13]-31592u, &fl);
             fprintf(stderr,"[dvdsm] 16018 flag-31592=%u DIstatus=0x%08X lr=0x%08X\n", fl, s_di.status, g_cpu.lr); } }
+        // 18F38 = result-bit branch; 18E68 = drive-state branch; 1920C = alt path.
+        // Uncapped counters + first-few dumps: which callback path executes?
+        if(pc==0x80018F38u||pc==0x80018E68u||pc==0x8001920Cu||pc==0x80018DB0u||pc==0x80018D1Cu||pc==0x80018CC8u||pc==0x80018D68u){
+          static unsigned _c1=0,_c2=0,_c3=0,_c4=0,_c5=0,_c6=0,_c7=0;
+          unsigned *c = pc==0x80018F38u?&_c1:pc==0x80018E68u?&_c2:pc==0x8001920Cu?&_c3:pc==0x80018DB0u?&_c4:pc==0x80018D1Cu?&_c5:pc==0x80018CC8u?&_c6:&_c7;
+          (*c)++;
+          if(*c<=3){
+            u32 s56=0,s60=0; guest_read32(g_cpu.gpr[13]-31568u, &s56); guest_read32(g_cpu.gpr[13]-31460u, &s60);
+            fprintf(stderr,"[dvdsm] %s r3=%u r4=0x%08X st=%u drv=%u (#%u)\n", pc==0x80018F38u?"18F38":pc==0x80018E68u?"18E68":pc==0x8001920Cu?"1920C":pc==0x80018DB0u?"18DB0":pc==0x80018D1Cu?"18D1C":pc==0x80018CC8u?"18CC8":"18D68", g_cpu.gpr[3], g_cpu.gpr[4], s56, s60, *c); }
+          if((*c%2000)==0){ u32 s56=0,s60=0,cb=0,cc=0; guest_read32(g_cpu.gpr[13]-31568u, &s56); guest_read32(g_cpu.gpr[13]-31460u, &s60); guest_read32(g_cpu.gpr[13]-31488u, &cb); guest_read32(g_cpu.gpr[13]-31584u, &cc);
+            fprintf(stderr,"[dvdsm] counts 18D1C=%u 18D68=%u 18DB0=%u 18E68=%u 18F38=%u 1920C=%u 18CC8=%u st=%u drv=%u curblk=0x%08X cb-31584=0x%08X\n", _c5,_c7,_c4,_c2,_c1,_c3,_c6, s56, s60, cb, cc); } }
+        // A374 = real inquiry completion callback. Same-chunk branches are
+        // native gotos (no dispatch), so A384/A3A0 probes can't fire —
+        // instead dump block+12 at entry: 0 = END write survived (success
+        // path), nonzero = overwritten after our write (error path).
+        if(pc==0x8000A374u){
+          static unsigned _a1=0; _a1++;
+          if(_a1<=3||_a1%4000==0){ uint32_t st=0xDEADu; guest_read32(g_cpu.gpr[4]+12u, &st);
+            fprintf(stderr,"[dvdsm] A374 r3=0x%08X blk=0x%08X blk+12=%u lr=0x%08X (#%u)\n",
+              g_cpu.gpr[3], g_cpu.gpr[4], st, g_cpu.lr, _a1); } }
 
         else if(pc==0x8001AF8Cu){ uint32_t v=g_cpu.gpr[30]; if(v==0) v=1; poke32_set(g_cpu.gpr[13]-31388u, v); }
         // GXRuntime VI retrace drive: 1 block dispatch = 1 work unit.
