@@ -239,10 +239,14 @@ static void chassis_init(void){
             }
         }
         if(!dvd_image_ready() && !s_disc_present_logged){
-            fprintf(stderr,"[dvd] no plain ISO image; DMA reads will ERROR (cover=%s)\n", root);
+            // No plain ISO exists (only .rvz + extracted tree) — but the
+            // tree-backed 0xA8 path serves real bytes, so report the disc
+            // as present (cover CLOSED). Leaving cover OPEN makes the
+            // guest's 177D0 cover poll spin before it ever issues reads.
+            fprintf(stderr,"[dvd] no plain ISO image; tree-backed reads active, cover=CLOSED (%s)\n", root);
             s_disc_present_logged = 1;
         }
-        dol_di_set_disc_present(&s_di, dvd_image_ready());
+        dol_di_set_disc_present(&s_di, true);
         dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DI, dol_di_interrupt_pending(&s_di));
     }
     s_chassis_inited = 1;
