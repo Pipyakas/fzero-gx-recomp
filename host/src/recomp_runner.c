@@ -179,13 +179,24 @@ static void hle_fallback(CPUState* cpu, uint32_t raw, uint32_t cia){
     ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
 }
 static bool hle_host_call(CPUState* cpu, uint32_t addr){
-
-
-
     if(addr==0x800102ACu){
+        // Real FST from the extracted tree (orig/GFZE01/files): walk it,
+        // build a multi-entry FST blob at 0x81200000 (dirs + files + strings),
+        // mirror base to low-mem 0x38/0xE4, return base in r3.
+        // Falls back to the old one-entry stub only if the tree is missing.
+        extern int dvd_build_fst_from_tree(uint8_t* ram, unsigned ram_size, unsigned base);
         if(cpu->ram_size >= 0x1200010u){
             uint32_t base=0x81200000u; uint32_t off=base - GC_RAM_BASE;
             if(off+16 <= cpu->ram_size){
+                int n = dvd_build_fst_from_tree(cpu->ram, cpu->ram_size, base);
+                if(n > 0){
+                    write_be32(cpu->ram + (0x80000038u - GC_RAM_BASE), base);
+                    write_be32(cpu->ram + (0x800000E4u - GC_RAM_BASE), base);
+                    cpu->gpr[3]=base;
+                    g_cpu.pc=g_cpu.lr & ~3u;
+                    { static int _fl=0; if(_fl<2){ fprintf(stderr,"[dvd] FST entries=%d base=0x%08X\n", n, base); _fl++; } }
+                    return true;
+                }
                 write_be32(cpu->ram + (0x80000038u - GC_RAM_BASE), base);
                 write_be32(cpu->ram + (0x800000E4u - GC_RAM_BASE), base);
                 write_be32(cpu->ram + off + 0, 0x01000000u);

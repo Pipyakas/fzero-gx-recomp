@@ -4,6 +4,7 @@
 #include "gx_fifo_bridge.h"
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
 
 static uint64_t s_draws=0, s_cmds=0, s_unknown=0;
 static uint32_t s_vcd_low=0, s_vcd_high=0;
@@ -62,6 +63,8 @@ static size_t decode_one(const uint8_t* d, size_t n){
 
 void gx_fifo_write(const uint8_t* data, size_t len){
   if(!data||!len) return;
+  { static int _flog=0; static uint64_t _ftot=0; _ftot+=len;
+    if(_flog<4 || (_ftot & 0xFFFFF) < (unsigned)len){ fprintf(stderr,"[fifo] write len=%zu total=%llu first=%02X %02X %02X %02X %02X %02X\n", len, (unsigned long long)_ftot, len>0?data[0]:0, len>1?data[1]:0, len>2?data[2]:0, len>3?data[3]:0, len>4?data[4]:0, len>5?data[5]:0); _flog++; } }
   if(s_len+len > sizeof(s_buf)){ s_len=0; } // overflow: drop
   memcpy(s_buf+s_len, data, len); s_len+=len;
   size_t consumed=0;
