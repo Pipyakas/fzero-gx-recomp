@@ -152,6 +152,13 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         dol_hle_queue_guest_callback(0x80018D1Cu, 0, 0);
         return DOL_DI_COMMAND_COMPLETE;
     }
+    // Motor/stop/reset class (dolsdk2001 DVDLowStopMotor 0xE3, Reset etc.):
+    // no payload, no DMA. COMPLETE (not ERROR) so the SDK state machine
+    // advances instead of retrying down an error path.
+    if((c0 & 0xFF000000u) == 0xE3000000u){
+        { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec STOPMOTOR (complete)\n"); _n++; } }
+        return DOL_DI_COMMAND_COMPLETE;
+    }
     if((c0 & 0xFF000000u) == 0xA8000000u
        && cmd->dma && !cmd->write && cmd->dma_length){
         u32 disc_off = cmd->command[1] << 2;
