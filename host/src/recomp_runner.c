@@ -202,14 +202,15 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         // we leave the inquiry body's stale -1/10 in place, the stop
         // completion branch mis-resolves. Write the SDK END(0) marker: the
         // stop body has no native writer of its own (it only reads).
-        // fzCL/fzCP: EXP — set drive-substate m56 (-31456) = 1. Full branch
-        // chain with m60=14, r3=0: 18D70 (m60==3? no) -> 18D74; 18D7C
-        // (m60!=0xF? yes, cr==false -> NO branch) -> falls to 18D80;
-        // rlwinm. bit30 of r3=0 -> EQ -> 18D84 branches to 18DB0; 18DBC
-        // (m60!=0xF -> NO) -> 18DC4 sets m32=1; 18DD4 (m56==0? with EXP
-        // m56=1 -> NO branch) -> SHOULD reach 18DD8 — but m48 stays 0, so
-        // either the chain diverges earlier or 18DD8's stores don't stick.
-        // Reversible experiment: remove if park persists.
+        // fzCL/fzCP/fzCQ: EXP — set drive-substate m56 (-31456) = 1.
+        // fzCQ timing proof: callback #1 (INQUIRY completion) runs BEFORE
+        // any STOPMOTOR write, so m56=0 -> body takes 18DD4->18E40 and files
+        // b12=-1 (error path, correct: no drive op done yet). Callback #2+
+        // (STOPMOTOR completions) see our m56=1 -> body takes 18DD8 path
+        // (files b12=10... but entry still shows b12=0/m48=0 because those
+        // are read BEFORE the body runs — post-body values unobserved).
+        // The park persists through both paths, so the drive-state branch is
+        // NOT the park driver. Keep EXP (harmless, matches SDK post-op=1).
         { uint32_t blk=0x8015BF20u; guest_read32(cmd->cpu->gpr[13]-31488u, &blk);
           if(blk < GC_RAM_BASE) blk = 0x8015BF20u;
           uint32_t ba = blk + 12u;
