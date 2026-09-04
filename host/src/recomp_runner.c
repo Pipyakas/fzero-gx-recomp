@@ -1205,14 +1205,30 @@ void recomp_run_slice(void){
         if(dol_hle_poll_callback(&g_cpu)){
           uint32_t cbpc = g_cpu.pc;
           { static unsigned _t=0; if(++_t<=4) fprintf(stderr,"[cb] trampoline cb=0x%08X from pc=0x%08X\n", cbpc, pc); }
-          // fzEC/fzED tried running the frame to completion + nesting, but
-          // that regresses: every 18D1C body re-issues STOPMOTOR via 16920,
-          // so synchronous nesting is unbounded (guard tripped at AD1C) and
-          // real HW defers motor-stop completions in time. Single-call +
-          // continue stands: the frame resumes via slice re-dispatch, and
-          // queued completions dispatch in later slice iterations with real
-          // timebase spacing between them.
-          dolrecomp_call(&g_cpu, cbpc);
+          // fzER: drive the callback frame to completion (blr to
+          // HLE_CALLBACK_RETURN), resuming across downcount-budget returns
+          // via the frame's own pc — NOT via slice re-dispatch. The old
+          // single-call + continue abandoned the frame at the first budget
+          // return (18D68 back-edge), and the slice re-dispatched the ENTRY
+          // pc (18D1C/17958) as a FRESH call: the body re-ran from the top,
+          // re-issued STOPMOTOR via 16920, and m56 never survived to the
+          // 18DD4 branch. Completions queued mid-frame (STOPMOTOR issued by
+          // the body's own 16920) run nested via poll_nested once the outer
+          // frame returns, before the slice context is restored. Guarded:
+          // 1M re-entries then restore + fall through to slice dispatch.
+          int guard = 0;
+          for(;;){
+            if(++guard > 1000000){
+              { static int _w=0; if(!_w){ _w=1;
+                fprintf(stderr,"[cb] frame guard tripped cb=0x%08X pc=0x%08X\n", cbpc, g_cpu.pc); } }
+              dol_hle_handle_callback_return(&g_cpu, HLE_CALLBACK_RETURN);
+              break; }
+            g_cpu.timebase += 1u; // deterministic: per re-entry, like slice
+            if(g_cpu.pc == HLE_CALLBACK_RETURN){
+              if(dol_hle_poll_nested(&g_cpu)){ cbpc = g_cpu.pc; continue; }
+              break; }
+            dolrecomp_call(&g_cpu, g_cpu.pc); }
+          dol_hle_handle_callback_return(&g_cpu, HLE_CALLBACK_RETURN);
           continue; }
         // First-dispatch trace: log each never-before-dispatched pc once.
         // Ring of last 64 + ever-total: early boot saturates any first-N
