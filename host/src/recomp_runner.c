@@ -526,6 +526,16 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[dvdsm] 16850-errorleg r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->gpr[4], cpu->lr, _v);
       return false; }
+    // fzEZ: 18D80 (dispatched) computes (r3>>1)&1 and 18D84 branches to
+    // 18DB0 (main body) vs 18D88 (STOPMOTOR path). r3=0 here => bit clear
+    // => 18DB0 always; the STOPMOTOR path needs r3 odd (r3=1 from the
+    // 19760 motor wrapper). Queueing completions with r3=0 pins the body
+    // on 18DB0; the motor wrapper's r3=1 would route to 18D88.
+    if(addr==0x80018D80u){
+      static unsigned _z=0; if(++_z<=4||_z%5000000==0)
+        fprintf(stderr,"[dvdsm] 18D80 r3=%u bit=%u (#%u)\n",
+          cpu->gpr[3], (cpu->gpr[3]>>1)&1u, _z);
+      return false; }
     // fzEU: 18D40 (dispatched) is the r3==0x10 error path; 18D58/18D5C
     // (native calls, never dispatch) route through 17958; 18D64/18D68
     // (dispatched) continue the main body. 18D3C-branch direction is read
@@ -1265,16 +1275,9 @@ void recomp_run_slice(void){
             if(g_cpu.pc == HLE_CALLBACK_RETURN){
               if(dol_hle_poll_nested(&g_cpu)){ cbpc = g_cpu.pc; continue; }
               break; }
-            // fzEX: trace frame resumptions (budget returns re-enter here
-            // with a mid-body pc). First-40 + every-200k: the pc sequence IS
-            // the body's executed path (entries + back-edges only).
-            // fzEY: ALSO trace RETURNS: when a frame's blr lands on
-            // HLE_CALLBACK_RETURN the loop exits silently — log the
-            // return address so completion vs runaway is visible.
-            { static unsigned _f=0; if(++_f<=40||_f%200000==0){
-              uint32_t _lr = g_cpu.lr;
-              fprintf(stderr,"[cb] resume #%u pc=0x%08X lr=0x%08X%s\n", _f, g_cpu.pc, _lr,
-                _lr==HLE_CALLBACK_RETURN?" ->RET":""); } }
+            // fzEX/fzEY: resume trace DISABLED (was first-40 + every-200k;
+            // answered: frame runs away into 1A178 error-report chain, never
+            // returns — the completion path is wrong, not slow).
             dolrecomp_call(&g_cpu, g_cpu.pc); }
           dol_hle_handle_callback_return(&g_cpu, HLE_CALLBACK_RETURN);
           continue; }
