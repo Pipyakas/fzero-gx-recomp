@@ -469,16 +469,9 @@ static void hle_fallback(CPUState* cpu, uint32_t raw, uint32_t cia){
     ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
 }
 static bool hle_host_call(CPUState* cpu, uint32_t addr){
-    // fzEWe: m64 transition watch — log pc whenever r13-31464 changes.
-    // m64 reads 1 at 179BC but 0 at the next 17958; only writer in the
-    // tree is 1799C (=1), so a 1->0 transition names the clearer.
-    { static uint32_t _last64=0; static int _have64=0;
-      uint32_t _v=0; guest_read32(cpu->gpr[13]-31464u,&_v);
-      if(_have64 && _v!=_last64){
-        static unsigned _t=0; if(++_t<=10)
-          fprintf(stderr,"[watch] m64 %u->%u at pc=0x%08X lr=0x%08X r13=0x%08X\n",
-            _last64, _v, addr, cpu->lr, cpu->gpr[13]); }
-      _last64=_v; _have64=1; }
+    // fzEWe (answered): m64 0->1 fires ONLY at A374-entry (native tail of
+    // the 17958 success stores); no 1->0 ever with valid r13 — the "clear"
+    // was an r13==0 context-switch alias. m64 is set-once, never cleared.
     // fzD5/fzD6: AEDC is `bl AC44` with NO downcount (falls through from
     // AED8, no dispatch point) — like AEC8 it NEVER fires as a probe, healthy
     // or DVD. The chain AECC->AED0->AED4->AED8->AEDC->AC44 runs native inside
