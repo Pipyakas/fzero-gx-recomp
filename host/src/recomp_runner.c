@@ -181,6 +181,8 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           guest_read32(cmd->cpu->gpr[13]-31488u, &block);
           if(block < GC_RAM_BASE) block = 0x8015BF20u;
           uint32_t cb = 0x80018D1Cu;
+          guest_read32(cmd->cpu->gpr[13]-31584u, &cb);
+          if(cb < GC_RAM_BASE) cb = 0x80018D1Cu;
           // fzCB: do NOT pre-write block+12. The native body files
           // 18DF8 stw r0,12(r30) with r0=10 itself (after setting drive
           // state -31448=7, -31456=0) — our END(0) pre-write is overwritten
