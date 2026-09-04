@@ -830,7 +830,13 @@ void recomp_run_slice(void){
         // (before/after AC44) to learn whether the sink re-runs per lap.
         if(pc==0x800189FCu){ static unsigned _n=0; _n++;
           if(_n<=8||_n%5000000==0){ uint32_t head=0; guest_read32(g_cpu.gpr[13]-31800u, &head);
-            fprintf(stderr,"[dvdsm] 189FC hits=%u head=0x%08X tb=0x%llX\n", _n, head, (unsigned long long)g_cpu.timebase); } }
+            fprintf(stderr,"[dvdsm] 189FC hits=%u head=0x%08X tb=0x%llX\n", _n, head, (unsigned long long)g_cpu.timebase); }
+          // fzEO: tag La = row 14 (0x80124018+14*4) -> 0x80018CC8 re-issue.
+          // Confirm the table row the dispatcher will take for THIS entry.
+          { static unsigned _t=0; if(++_t<=6){ uint32_t blk=g_cpu.gpr[3], tag=0xDEADu, row=0xDEADu;
+            if(blk) guest_read32(blk+8u,&tag);
+            guest_read32(0x80124018u+tag*4u,&row);
+            fprintf(stderr,"[dvdsm] 189FC tag=%u row=0x%08X blk=0x%08X (#t=%u)\n", tag, row, blk, _t); } } }
         if(pc==0x80016018u){ static int _n=0; if(_n<8){ _n++;
             u32 fl=0; guest_read32(g_cpu.gpr[13]-31592u, &fl);
             fprintf(stderr,"[dvdsm] 16018 flag-31592=%u DIstatus=0x%08X lr=0x%08X\n", fl, s_di.status, g_cpu.lr); } }
