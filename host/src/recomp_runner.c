@@ -910,8 +910,11 @@ void recomp_run_slice(void){
             if(!_haveR30){ _haveR30=1; _firstR30=g_cpu.gpr[30]; }
             // fzDN: sample r1 (stack) per lap: nesting => r1 declines as the
             // callback body re-enters per lap; flat loop => r1 constant.
-            if(_laps<=8||_laps%20000000==0) fprintf(stderr,"[ins] lap=%u r6=0x%08X r30=0x%08X r4=0x%08X firstR30=0x%08X %s r1=0x%08X tb=0x%llX\n",
-              _laps, g_cpu.gpr[6], g_cpu.gpr[30], g_cpu.gpr[4], _firstR30,
+            // fzDU: ALSO capture r29 (new node) per lap: the tail lap should
+            // show r29==CDD8 while r6 walks head..tail; the SELF-link lap
+            // would show r6==r29==CDD8 (walk already AT the new node).
+            if(_laps<=8||_laps%20000000==0) fprintf(stderr,"[ins] lap=%u r6=0x%08X r29=0x%08X r30=0x%08X r4=0x%08X firstR30=0x%08X %s r1=0x%08X tb=0x%llX\n",
+              _laps, g_cpu.gpr[6], g_cpu.gpr[29], g_cpu.gpr[30], g_cpu.gpr[4], _firstR30,
               (g_cpu.gpr[30]==_firstR30)?"SAME-KEY":"NEW-KEY", g_cpu.gpr[1], (unsigned long long)g_cpu.timebase);
             if(_laps%5000000==0){ uint32_t head=0; guest_read32(g_cpu.gpr[13]-31800u, &head);
               fprintf(stderr,"[ins] laps=%u head=0x%08X tb=0x%llX\n", _laps, head, (unsigned long long)g_cpu.timebase); }
