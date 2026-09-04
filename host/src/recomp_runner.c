@@ -506,6 +506,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           addr==0x80017958u?"17958":addr==0x800179BCu?"179BC":addr==0x800187CCu?"187CC":"18820",
           a, b, cpu->lr, *c); }
       return false; }
+    // fzEL: 187E8-gate sides (187F0 = 19FA4-ret==0 early-out; 187FC =
+    // continue) and 18804-gate sides (18808 vs 1881C) — which way?
+    if(addr==0x800187F0u||addr==0x800187FCu||addr==0x80018808u||addr==0x8001881Cu){
+      static unsigned _e1=0,_e2=0,_e3=0,_e4=0;
+      unsigned *c=addr==0x800187F0u?&_e1:addr==0x800187FCu?&_e2:addr==0x80018808u?&_e3:&_e4; (*c)++;
+      if(*c<=3) fprintf(stderr,"[watch] %s lr=0x%08X (#%u)\n",
+        addr==0x800187F0u?"187F0-earlyout":addr==0x800187FCu?"187FC-cont":addr==0x80018808u?"18808":"1881C",
+        cpu->lr, *c);
+      return false; }
     // fzEJ: 18830 = consume path (m64!=0), 18868 = skip path (m64==0).
     if(addr==0x80018830u||addr==0x80018868u){
       static unsigned _g2=0,_g3=0; unsigned *c=addr==0x80018830u?&_g2:&_g3; (*c)++;
