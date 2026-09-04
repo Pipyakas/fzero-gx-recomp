@@ -534,6 +534,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _y=0; if(++_y<=4) fprintf(stderr,"[dvdsm] 19760 r3=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->lr, _y);
       return false; }
+    // fzEXh: 18F40 (dispatched) zeroes m36 then reads m56; 18F50 branch
+    // (native) routes to 18FB0 (m56==0) vs 18F54 (m56!=0). m56 dump here
+    // tells which side every completion takes at the top of F38 route.
+    if(addr==0x80018F40u){
+      static unsigned _k=0; if(++_k<=4||_k%5000000==0){ uint32_t m=0;
+        guest_read32(cpu->gpr[13]-31456u,&m);
+        fprintf(stderr,"[dvdsm] 18F40 m56=%u r3=%u (#%u)\n", m, cpu->gpr[3], _k); }
+      return false; }
     // fzEXg: 18F54/18F7C (both dispatched) bracket the F38 route's slot
     // invoke (18F88 blrl). If 18F54 fires but 18F7C never does, the frame
     // never returns from the block's slot callback (blrl runs away).
