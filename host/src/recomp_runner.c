@@ -817,13 +817,17 @@ void recomp_run_slice(void){
         // fzD1: AC44 r29 = r3 (AC58 or r29,r3,r3) — the NEW-NODE pointer is
         // the caller's r3. Dump r3's target words (+8/+12 key, +16/+20 links)
         // to see whether the caller passes a FRESH node or the TAIL itself.
+        // fzD7: also dump r5 (AED0 adde r5,r29,r3 result) + xer[CA] at AC44
+        // entry: DVD path's AECC addc wraps (r6=0x80000000, CA=1?) vs healthy
+        // no-carry. If DVD r5 != 0 while healthy r5 == 0, the wrapped carry
+        // poisoned the key high word and AC44 files under a corrupt key.
         if(pc==0x8000AC44u){
           static unsigned _v=0; _v++;
           if(_v<=4||_v%5000000==0){ uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
             uint32_t t8=0,t12=0,t16=0,t20=0; uint32_t t=g_cpu.gpr[3];
             guest_read32(t+8u,&t8); guest_read32(t+12u,&t12); guest_read32(t+16u,&t16); guest_read32(t+20u,&t20);
-            fprintf(stderr,"[watch] AC44 new=r3=0x%08X k=%08X:%08X l16=0x%08X l20=0x%08X r6=0x%08X node12=0x%08X lr=0x%08X tb=0x%llX (#%u)\n",
-              t, t8, t12, t16, t20, g_cpu.gpr[6], n12, g_cpu.lr, (unsigned long long)g_cpu.timebase, _v); } }
+            fprintf(stderr,"[watch] AC44 new=r3=0x%08X k=%08X:%08X l16=0x%08X l20=0x%08X r5=0x%08X r6=0x%08X xerCA=%u node12=0x%08X lr=0x%08X tb=0x%llX (#%u)\n",
+              t, t8, t12, t16, t20, g_cpu.gpr[5], g_cpu.gpr[6], (g_cpu.xer>>29)&1u, n12, g_cpu.lr, (unsigned long long)g_cpu.timebase, _v); } }
         // AEC8 is `bl 1142C` with NO downcount (falls through from AEC4, no
         // dispatch point) — fzB1 confirms it never fires. Watch AECC instead
         // (addc r6,r28,r4, HAS downcount -=5, dispatched): r6 here is the
