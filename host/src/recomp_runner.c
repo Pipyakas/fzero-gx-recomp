@@ -520,10 +520,9 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         cpu->gpr[3], cpu->gpr[4], cpu->ctr, cpu->lr, *c);
       if(*c%5000000==0) fprintf(stderr,"[watch] 19FA4-loop 19FC4=%u 19FCC=%u 19FDC=%u 19FE0=%u 19FE4=%u 19FEC=%u\n", _m1,_m2,_m3,_m4,_m5,_m6);
       return false; }
-    // fzEW: 16850 (dispatched entry) is called ONLY from the 18E40 error
-    // leg (18E4C->18E60 bl 16850). If it fires per completion, the body
-    // takes the m56==0 error leg; 16920-with-lr=1923C marks the 19218 leg.
-    // Correlating the two per completion # tells which leg each takes.
+    // fzEW: 16850 (dispatched entry) is the error-report fn called from
+    // MANY legs (18E60, 188E4, 188FC, 189BC...). Caller lr distinguishes:
+    // lr=18E60 => m56==0 error leg; lr=188E4/188FC => m48-cascade legs.
     if(addr==0x80016850u){
       static unsigned _v=0; if(++_v<=6||_v%5000000==0)
         fprintf(stderr,"[dvdsm] 16850-errorleg r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
