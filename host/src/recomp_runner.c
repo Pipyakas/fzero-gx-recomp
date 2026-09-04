@@ -806,7 +806,10 @@ void recomp_run_slice(void){
         // Track prev-lap (r6,r29) vs current [r6+16]/[r29+20]: SELF-link iff
         // [r6+16]==r6 && [r29+20]==r29 with r6==r29.
         { static uint32_t _pr6=0,_pr29=0; static int _have=0;
-          if(pc==0x8000AD1Cu){
+          static unsigned _laps=0;
+          if(pc==0x8000AD1Cu){ _laps++;
+            if(_laps%5000000==0){ uint32_t head=0; guest_read32(g_cpu.gpr[13]-31800u, &head);
+              fprintf(stderr,"[ins] laps=%u head=0x%08X tb=0x%llX\n", _laps, head, (unsigned long long)g_cpu.timebase); }
             if(_have){ uint32_t s16=0,s20=0;
               guest_read32(_pr6+16u,&s16); guest_read32(_pr29+20u,&s20);
               if(_pr6==_pr29){ static unsigned _n=0;
