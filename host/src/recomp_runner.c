@@ -1356,6 +1356,11 @@ void recomp_run_slice(void){
               dol_hle_handle_callback_return(&g_cpu, HLE_CALLBACK_RETURN);
               break; }
             g_cpu.timebase += 1u; // deterministic: per re-entry, like slice
+            // fzESb: replenish downcount exactly like the slice loop.
+            // Without this the AD1C walk exhausts the budget once, then
+            // EVERY back-edge returns immediately and the frame spins at
+            // AD1C forever (fzED guard tripped here, not in the body).
+            if(g_cpu.downcount < -800) g_cpu.downcount += 1000;
             if(g_cpu.pc == HLE_CALLBACK_RETURN){
               if(dol_hle_poll_nested(&g_cpu)){ cbpc = g_cpu.pc; continue; }
               break; }
