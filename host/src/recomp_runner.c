@@ -154,7 +154,13 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         // u16 revision, u16 deviceCode, u32 releaseDate, u8 pad[24]).
         // Realizarre values from Dolphin: rev 1, device 0, date 0x20011023-ish.
         // (GameCube SDK rev used by F-Zero era titles.)
+        // DI DMA registers carry a 26-bit PHYSICAL RAM address. GXRuntime
+        // correctly masks DMAADDR to 0x03FFFFE0, so convert it back to the
+        // cached guest alias before indexing RAM. The old >=0x80000000 test
+        // rejected 0x0015BF00 and silently never wrote DriveInfo; the guest
+        // then saw zeros and retried INQUIRY/STOPMOTOR forever.
         u32 a = cmd->dma_address;
+        if(a < cmd->cpu->ram_size) a |= GC_RAM_BASE;
         if(a >= GC_RAM_BASE && a + 32 <= GC_RAM_BASE + cmd->cpu->ram_size){
             uint8_t* d = cmd->cpu->ram + (a - GC_RAM_BASE);
             d[0]=0; d[1]=1; d[2]=0; d[3]=0;
