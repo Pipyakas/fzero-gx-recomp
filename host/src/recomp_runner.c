@@ -24,6 +24,7 @@
 #define HLE_CALLBACK_RETURN 0x7FFF0000u
 bool dol_hle_queue_guest_callback(u32 address, u32 r3, u32 r4);
 bool dol_hle_poll_callback(CPUState* cpu);
+bool dol_hle_poll_nested(CPUState* cpu);
 bool dol_hle_handle_callback_return(CPUState* cpu, u32 address);
 void dol_hle_init(const void* config);
 
@@ -1115,9 +1116,22 @@ void recomp_run_slice(void){
         // dispatch by design — no bug here.)
         if(dol_hle_poll_callback(&g_cpu)){
           uint32_t cbpc = g_cpu.pc;
-          { static unsigned _t=0; if(++_t<=2) fprintf(stderr,"[cb] trampoline cb=0x%08X from pc=0x%08X\n", cbpc, pc); }
+          { static unsigned _t=0; if(++_t<=4) fprintf(stderr,"[cb] trampoline cb=0x%08X from pc=0x%08X\n", cbpc, pc); }
+          // fzEC: nest the completion INSIDE the preempted walk. poll()
+          // saved the walk context; the queued STOPMOTOR completion body
+          // (1923C->1933C->17958->1799C->187CC sink + finally the new
+          // command's real callback) runs here as nested dolrecomp_call
+          // frames. When the queue drains, execution falls through to the
+          // outer dolrecomp_call(pc) below, which RESUMES the walk with the
+          // callback's register effects in place. Do NOT `continue`: that
+          // re-dispatches pc as a fresh frame while the saved context still
+          // shadows it, re-running the walk head on stale keys.
           dolrecomp_call(&g_cpu, cbpc);
-          continue; }
+          while(dol_hle_poll_nested(&g_cpu)){
+            uint32_t cb2 = g_cpu.pc;
+            { static unsigned _t2=0; if(++_t2<=4) fprintf(stderr,"[cb] nested cb=0x%08X\n", cb2); }
+            dolrecomp_call(&g_cpu, cb2); }
+          dol_hle_handle_callback_return(&g_cpu, HLE_CALLBACK_RETURN); }
         // First-dispatch trace: log each never-before-dispatched pc once.
         // Ring of last 64 + ever-total: early boot saturates any first-N
         // cap (384 unique in minutes), so keep a sliding window over the

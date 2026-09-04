@@ -149,6 +149,27 @@ bool dol_hle_poll_callback(CPUState* cpu) {
     return true;
 }
 
+// fzEC: dequeue the next queued callback WITHOUT saving context. Used to
+// nest completions issued from inside a running callback body (e.g. the
+// STOPMOTOR completion queued by 18D1C's own sink chain) within the OUTER
+// callback's frame, before the outer saved context is restored. Keeps
+// g_callback_active set (owned by the outer poll); the single
+// handle_callback_return at the end restores the preempted slice context.
+bool dol_hle_poll_nested(CPUState* cpu) {
+    if (cpu == NULL || !g_callback_active || g_callback_count == 0)
+        return false;
+    HlePendingCallback pending = g_callback_queue[g_callback_read];
+    g_callback_read = (g_callback_read + 1u) % HLE_CALLBACK_QUEUE_CAPACITY;
+    g_callback_count--;
+    cpu->gpr[3] = pending.r3;
+    cpu->gpr[4] = pending.r4;
+    cpu->pc = pending.address;
+    cpu->lr = HLE_CALLBACK_RETURN;
+    cpu->exception = 0;
+    cpu->program_exception = 0;
+    return true;
+}
+
 bool dol_hle_handle_callback_return(CPUState* cpu, u32 address) {
     if (address == HLE_CALLBACK_RETURN && g_callback_active) {
         restore_callback_context(cpu, &g_callback_context);
