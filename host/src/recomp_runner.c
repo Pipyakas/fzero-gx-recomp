@@ -471,12 +471,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // Fix (fzBU): zero the callback's non-arg regs at poll time.
     if(addr==0x80018D1Cu){
       static unsigned _d=0; if(++_d<=4||_d%5000000==0){
-        uint32_t v60=0,v56=0,v36=0,v32=0,b12=0; uint32_t blk=cpu->gpr[4];
+        uint32_t v60=0,v56=0,v36=0,v32=0,b12=0,v64=0; uint32_t blk=cpu->gpr[4];
         guest_read32(cpu->gpr[13]-31460u,&v60); guest_read32(cpu->gpr[13]-31456u,&v56);
         guest_read32(cpu->gpr[13]-31436u,&v36); guest_read32(cpu->gpr[13]-31432u,&v32);
-        if(blk) guest_read32(blk+12u,&b12);
-        fprintf(stderr,"[watch] 18D1C r3=%u blk=0x%08X b12=%u m60=%u m56=%u m36=%u m32=%u r30=0x%08X r31=0x%08X (#%u)\n",
-          cpu->gpr[3], blk, b12, v60, v56, v36, v32, cpu->gpr[30], cpu->gpr[31], _d); }
+        guest_read32(cpu->gpr[13]-31464u,&v64);
+        if(blk){ guest_read32(blk+12u,&b12); }
+        uint32_t b8=0; if(blk) guest_read32(blk+8u,&b8);
+        fprintf(stderr,"[watch] 18D1C r3=%u blk=0x%08X b8=%u b12=%u m64=%u m60=%u m56=%u m36=%u m32=%u r30=0x%08X r31=0x%08X (#%u)\n",
+          cpu->gpr[3], blk, b8, b12, v64, v60, v56, v36, v32, cpu->gpr[30], cpu->gpr[31], _d); }
       return false; }
     // Re-walk key probe (fzBJ): AD60 publishes head=r29 then AD68 rebuilds
     // the search key from the NEW node (r6=[r29+12], r0=[r29+8]).
