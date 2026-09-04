@@ -874,6 +874,12 @@ void recomp_run_slice(void){
               pc==0x80019690u?"19690":pc==0x80019700u?"19700":"187CC",
               g_cpu.gpr[3], g_cpu.gpr[30], g_cpu.gpr[31], tag, st, s48, s60, cb, g_cpu.lr, *c); }
           if((*c%20000)==0) fprintf(stderr,"[dvdsm] sinkchain 19690=%u 19700=%u 187CC=%u\n", _w1,_w2,_w3); }
+        // fzET: 187CC entry lr split — lr=179F0 (drain, m64=1) vs
+        // lr=1973C/others (empty-drain probes). Uncapped by phase.
+        { static unsigned _l1=0,_l2=0; unsigned *c= g_cpu.lr==0x800179F0u?&_l1:&_l2; (*c)++;
+          if(*c<=3||*c%5000000==0){ uint32_t a=0; guest_read32(g_cpu.gpr[13]-31464u,&a);
+            fprintf(stderr,"[dvdsm] 187CC-by-lr %s m64=%u r3=0x%08X (#%u)\n",
+              g_cpu.lr==0x800179F0u?"drain":"other", a, g_cpu.gpr[3], *c); } }
         // 18F38 = result-bit branch; 18E68 = drive-state branch; 1920C = alt path.
         // Uncapped counters + first-few dumps: which callback path executes?
         // fzC6: ALSO watch the 18D1C return chain 18CF0/18D0C/16A38 — these
