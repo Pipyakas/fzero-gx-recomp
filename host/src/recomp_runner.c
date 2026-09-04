@@ -532,6 +532,17 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _y=0; if(++_y<=4) fprintf(stderr,"[dvdsm] 19760 r3=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->lr, _y);
       return false; }
+    // fzEZb: 18D68/18D74/18D88 are ALL dispatched (18D6C/18D78 compares
+    // native). m60==14 here: 18D68 (m60==3?) falls to 18D74 (m60==15?)
+    // falls to 18D80. Uncapped counters + first dumps per label.
+    if(addr==0x80018D68u||addr==0x80018D74u||addr==0x80018D88u){
+      static unsigned _x1=0,_x2=0,_x3=0;
+      unsigned *c=addr==0x80018D68u?&_x1:addr==0x80018D74u?&_x2:&_x3; (*c)++;
+      if(*c<=3||*c%5000000==0){ uint32_t m=0; guest_read32(cpu->gpr[13]-31460u,&m);
+        fprintf(stderr,"[dvdsm] %s m60=%u r3=%u (#%u)\n",
+          addr==0x80018D68u?"18D68":addr==0x80018D74u?"18D74":"18D88-STOP",
+          m, cpu->gpr[3], *c); }
+      return false; }
     // fzEZ: 18D80 (dispatched) computes (r3>>1)&1 and 18D84 branches to
     // 18DB0 (main body) vs 18D88 (STOPMOTOR path). r3=0 here => bit clear
     // => 18DB0 always; the STOPMOTOR path needs r3 odd (r3=1 from the
