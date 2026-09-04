@@ -864,6 +864,12 @@ void recomp_run_slice(void){
         // If downcount hovers just above -1000 and AD1C re-dispatches, laps
         // are budget returns (walk never exits). If it stays high, the walk
         // DOES exit via AE80 and something re-calls AC44 per lap.
+        // fzCW finding: lr at AD1C is ALWAYS 0x8000AEE0 and the live
+        // backchain is [AEE0][16990][1923C][7FFF0000][18CF0][189E8]... —
+        // the 7FFF0000 sentinel proves the park runs INSIDE the un-returned
+        // HLE 18D1C callback (trampoline preempted AC34). Laps are slice-loop
+        // resumptions of that same callback body after budget returns, not
+        // fresh allocator calls. The walk never reaches AE80 blr.
         if(pc==0x8000AD1Cu){
           static unsigned _p=0; _p++;
           if(_p<=6||_p%20000000==0){ uint32_t w8=0xDEADu,w12=0xDEADu,w20=0xDEADu;
