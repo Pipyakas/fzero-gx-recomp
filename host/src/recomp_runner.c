@@ -589,13 +589,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
         addr==0x80018F98u?"18F98-predrain":"18FAC-postdrain", cpu->gpr[3], *c);
       return false; }
-    // fzEYz: 1A340/1A3DC (dispatched) lead to the 19500 slot-register
-    // call. If none fire, the slot-register path never runs and 18E04
-    // always skips the invoke.
-    if(addr==0x8001A340u||addr==0x8001A3DCu){
-      static unsigned _o1=0,_o2=0; unsigned *c=addr==0x8001A340u?&_o1:&_o2; (*c)++;
-      if(*c<=3) fprintf(stderr,"[dvdsm] %s lr=0x%08X (#%u)\n",
-        addr==0x8001A340u?"1A340":"1A3DC", cpu->lr, *c);
+    // fzEYz2: 1A344/1A348/1A354/1A37C/1A3AC/1A3B0/1A3B8/1A3C0/1A3CC all
+    // dispatch on the 1A340 cascade into the 19500 slot-register call.
+    // 1A340/1A3DC themselves are native branch labels (no downcount).
+    if(addr==0x8001A344u||addr==0x8001A348u||addr==0x8001A354u||addr==0x8001A37Cu||addr==0x8001A3ACu||addr==0x8001A3B0u||addr==0x8001A3B8u||addr==0x8001A3C0u||addr==0x8001A3CCu){
+      static unsigned _o[9]={0}; int _i=
+        addr==0x8001A344u?0:addr==0x8001A348u?1:addr==0x8001A354u?2:addr==0x8001A37Cu?3:
+        addr==0x8001A3ACu?4:addr==0x8001A3B0u?5:addr==0x8001A3B8u?6:addr==0x8001A3C0u?7:8;
+      const char *_nm[9]={"1A344","1A348","1A354","1A37C","1A3AC","1A3B0","1A3B8","1A3C0","1A3CC"};
+      if(++_o[_i]<=3) fprintf(stderr,"[dvdsm] %s lr=0x%08X (#%u)\n", _nm[_i], cpu->lr, _o[_i]);
       return false; }
     // fzEYz: 19500 (dispatched entry) files block+40 (slot) at 19538.
     // If it never fires, no slot is ever registered and 18E04 always
