@@ -589,6 +589,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
         addr==0x80018F98u?"18F98-predrain":"18FAC-postdrain", cpu->gpr[3], *c);
       return false; }
+    // fzEYz: 1A340/1A3DC (dispatched) lead to the 19500 slot-register
+    // call. If none fire, the slot-register path never runs and 18E04
+    // always skips the invoke.
+    if(addr==0x8001A340u||addr==0x8001A3DCu){
+      static unsigned _o1=0,_o2=0; unsigned *c=addr==0x8001A340u?&_o1:&_o2; (*c)++;
+      if(*c<=3) fprintf(stderr,"[dvdsm] %s lr=0x%08X (#%u)\n",
+        addr==0x8001A340u?"1A340":"1A3DC", cpu->lr, *c);
+      return false; }
     // fzEYz: 19500 (dispatched entry) files block+40 (slot) at 19538.
     // If it never fires, no slot is ever registered and 18E04 always
     // skips the invoke — the completion can never call back up.
