@@ -534,6 +534,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _y=0; if(++_y<=4) fprintf(stderr,"[dvdsm] 19760 r3=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->lr, _y);
       return false; }
+    // fzEXe: 18F98/18FAC (both dispatched) bracket the 18FA8 drain call.
+    // If 18F98 fires but 18FAC never does, the frame never returns from
+    // the 187CC drain on the F38 route (drain runs away, as in fzEX).
+    if(addr==0x80018F98u||addr==0x80018FACu){
+      static unsigned _n1=0,_n2=0; unsigned *c=addr==0x80018F98u?&_n1:&_n2; (*c)++;
+      if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
+        addr==0x80018F98u?"18F98-predrain":"18FAC-postdrain", cpu->gpr[3], *c);
+      return false; }
     // fzEXd: 18F38 computes r3&1 (dispatched) — dump r3/bit per
     // completion. r3=0 => EQ => F3C falls to 18F40 route; r3 odd => to
     // 1920C. F38-fallthrough labels never fire, so expect r3 odd here.
