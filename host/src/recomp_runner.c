@@ -115,9 +115,15 @@ static bool chassis_di_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 val
     if(!dol_di_mmio_contains(ea)) return false;
     // Trace every DI MMIO write (bounded): command words + TSTART show the
     // exact SDK sequence without needing a symbol map.
-    { static int _n=0; if(_n<40){ fprintf(stderr,"[di] %s write 0x%08X <- 0x%08X (pc=0x%08X)\n",
+    // fzEF: log command-word writes (0xCC006008) + CTL uncapped by count
+    // (M2 progress = c0 ever becomes 0xA8 FST read vs 0x12/0xE3 retries).
+    { static unsigned _n=0,_n8=0; _n++;
+      if(ea==0xCC006008u){ _n8++;
+        if(_n8<=12||_n8%200==0) fprintf(stderr,"[di] CMD #%u 0x%08X <- 0x%08X (pc=0x%08X)\n",
+          _n8, ea, (u32)value, cpu?cpu->pc:0); }
+      else if(_n<40){ fprintf(stderr,"[di] %s write 0x%08X <- 0x%08X (pc=0x%08X)\n",
         ea==0xCC00601Cu?"CTL":ea==0xCC006014u?"DMAADDR":ea==0xCC006018u?"DMALEN":"REG",
-        ea, (u32)value, cpu?cpu->pc:0); _n++; } }
+        ea, (u32)value, cpu?cpu->pc:0); } }
     dol_di_mmio_write(&s_di, cpu, ea, (u8)size, value);
     dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DI, dol_di_interrupt_pending(&s_di));
     return true;
@@ -524,8 +530,13 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // the command-block pointer + callback. Touches nothing (returns false).
     if(addr==0x80016A38u){
         static int _n=0;
-        if(_n<6){ fprintf(stderr,"[di] 16A38 entry r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X lr=0x%08X\n",
-            cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7], cpu->lr); _n++; }
+        // fzEF: log EVERY issue (uncapped counter + c0 command word from the
+        // DI reg 0xCC006008): M2 progress = c0 ever becomes 0xA8 (FST read)
+        // instead of 0x12 (INQUIRY)/0xE3 (STOPMOTOR) retries.
+        _n++;
+        if(_n<=10||_n%200==0){
+          fprintf(stderr,"[di] 16A38 #%d r3=0x%08X r4=0x%08X lr=0x%08X\n",
+            _n, cpu->gpr[3], cpu->gpr[4], cpu->lr); }
         return false;
     }
     // NOTE 800102AC is NOT DVDGetFSTLocation: it reads low-mem 0x800000E4
