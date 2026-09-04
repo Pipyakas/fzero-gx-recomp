@@ -534,6 +534,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _y=0; if(++_y<=4) fprintf(stderr,"[dvdsm] 19760 r3=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->lr, _y);
       return false; }
+    // fzEXg: 18F54/18F7C (both dispatched) bracket the F38 route's slot
+    // invoke (18F88 blrl). If 18F54 fires but 18F7C never does, the frame
+    // never returns from the block's slot callback (blrl runs away).
+    if(addr==0x80018F54u||addr==0x80018F7Cu){
+      static unsigned _h1=0,_h2=0; unsigned *c=addr==0x80018F54u?&_h1:&_h2; (*c)++;
+      if(*c<=3||*c%5000000==0){ uint32_t m=0; guest_read32(cpu->gpr[13]-31452u,&m);
+        fprintf(stderr,"[dvdsm] %s m52=0x%08X r3=%d (#%u)\n",
+          addr==0x80018F54u?"18F54-preslot":"18F7C-postslot", m, (int32_t)cpu->gpr[3], *c); }
+      return false; }
     // fzEXf: 18F8C (dispatched) reads the m52 callback slot; 18F94
     // branches to 18FA8-drain vs 18F98. m52 dump tells whether a slot cb
     // is even registered for this completion.
