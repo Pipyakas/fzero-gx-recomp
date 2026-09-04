@@ -503,8 +503,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[watch] 17958 r3=0x%08X m64=%u m60=%u lr=0x%08X (#%u)\n",
           cpu->gpr[3], v64, v60, cpu->lr, _h); }
       return false; }
-    // fzEI: 1A2EC (dispatched entry, chunk_6) is the sub-call on the 17958
-    // success path — does it dispatch (i.e. does the path reach it)?
+    // fzEI: 179BC dispatches right AFTER the 17998/1799C stores — dump
+    // m64/m60/m56 there to confirm the success write landed. 1A2EC
+    // (chunk_6 entry) + 169AC confirm sink reachability.
+    if(addr==0x800179BCu){
+      static unsigned _b=0; if(++_b<=4){ uint32_t a=0,b=0,c=0;
+        guest_read32(cpu->gpr[13]-31464u,&a); guest_read32(cpu->gpr[13]-31460u,&b);
+        guest_read32(cpu->gpr[13]-31456u,&c);
+        fprintf(stderr,"[watch] 179BC m64=%u m60=%u m56=%u lr=0x%08X (#%u)\n", a, b, c, cpu->lr, _b); }
+      return false; }
     if(addr==0x8001A2ECu||addr==0x800169ACu){
       static unsigned _k1=0,_k2=0; unsigned *c=addr==0x8001A2ECu?&_k1:&_k2; (*c)++;
       if(*c<=4){ uint32_t v64=0; guest_read32(cpu->gpr[13]-31464u,&v64);
