@@ -127,6 +127,14 @@ bool dol_hle_poll_callback(CPUState* cpu) {
 
     save_callback_context(&g_callback_context, cpu);
     g_callback_active = true;
+    // fzEV: callbacks run on the issuing thread with a FRESH condition
+    // register — the preempted slice's CR (e.g. AD1C-walk compare residue)
+    // must not leak into the callback body. The 18D3C branch reads CR1
+    // (set by 18D20 cmplwi) natively mid-chunk, but any stale CR1 from the
+    // preempted context that survives to a later compare corrupts the
+    // branch. Reset CR (and XER carried-borrow state) at dispatch.
+    cpu->cr = 0;
+    cpu->xer &= ~0x20000000u;
     // fzBU: the callback's NON-ARG regs must match what the preempted slice
     // had — EXCEPT r30/r31, which the native 18D1C body reads (16984 r6=r30,
     // 16960 r31=...) as *its own locals* without ever writing them first.
