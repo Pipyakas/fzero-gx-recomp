@@ -174,23 +174,20 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           guest_read32(cmd->cpu->gpr[13]-31488u, &block);
           if(block < GC_RAM_BASE) block = 0x8015BF20u;
           uint32_t cb = 0x80018D1Cu;
-          // Mark the block complete the way the SDK's ISR would: state
-          // (offset 0x0C, == DVD_CB_STATE per hle_dvd.c) = END(0), transferred
-          // lengths at 0x1C/0x20. A374 checks block+12==0 for success; without
-          // this it always took the error path (flag=1) and re-issued.
-          { uint32_t ba2 = block + 12u;
-            if(ba2 >= GC_RAM_BASE && ba2 + 4u > ba2 && ba2 + 4u <= GC_RAM_BASE + cmd->cpu->ram_size){
-              uint8_t* p = cmd->cpu->ram + (ba2 - GC_RAM_BASE);
-              p[0]=0; p[1]=0; p[2]=0; p[3]=0;
-              uint32_t t1 = block + 28u, t2 = block + 32u; uint32_t len = cmd->dma_length;
-              if(t1+4u <= GC_RAM_BASE + cmd->cpu->ram_size && t2+4u <= GC_RAM_BASE + cmd->cpu->ram_size){
-                uint8_t* q1 = cmd->cpu->ram + (t1 - GC_RAM_BASE);
-                uint8_t* q2 = cmd->cpu->ram + (t2 - GC_RAM_BASE);
-                q1[0]=(uint8_t)(len>>24); q1[1]=(uint8_t)(len>>16); q1[2]=(uint8_t)(len>>8); q1[3]=(uint8_t)len;
-                q2[0]=(uint8_t)(len>>24); q2[1]=(uint8_t)(len>>16); q2[2]=(uint8_t)(len>>8); q2[3]=(uint8_t)len;
-              }
-              { static int _m=0; if(_m<2){ _m++; fprintf(stderr,"[di] INQUIRY blk=0x%08X state=END len=%u cb=0x%08X\n", block, len, cb); } }
-            } }
+          // fzCB: do NOT pre-write block+12. The native body files
+          // 18DF8 stw r0,12(r30) with r0=10 itself (after setting drive
+          // state -31448=7, -31456=0) — our END(0) pre-write is overwritten
+          // (b12 flip-flops 0/-1 across callbacks) and may corrupt the
+          // state the body expects. Lengths at +28/+32 are untouched.
+          // (A374 slot check is moot: body invokes slot itself via blrl.)
+          { uint32_t t1 = block + 28u, t2 = block + 32u; uint32_t len = cmd->dma_length;
+            if(t1+4u <= GC_RAM_BASE + cmd->cpu->ram_size && t2+4u <= GC_RAM_BASE + cmd->cpu->ram_size){
+              uint8_t* q1 = cmd->cpu->ram + (t1 - GC_RAM_BASE);
+              uint8_t* q2 = cmd->cpu->ram + (t2 - GC_RAM_BASE);
+              q1[0]=(uint8_t)(len>>24); q1[1]=(uint8_t)(len>>16); q1[2]=(uint8_t)(len>>8); q1[3]=(uint8_t)len;
+              q2[0]=(uint8_t)(len>>24); q2[1]=(uint8_t)(len>>16); q2[2]=(uint8_t)(len>>8); q2[3]=(uint8_t)len;
+            }
+            { static int _m=0; if(_m<2){ _m++; fprintf(stderr,"[di] INQUIRY blk=0x%08X len=%u cb=0x%08X (b12 left for native body)\n", block, len, cb); } } }
           dol_hle_queue_guest_callback(cb, 0, block); }
         return DOL_DI_COMMAND_COMPLETE;
     }
