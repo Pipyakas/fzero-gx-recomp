@@ -826,6 +826,10 @@ void recomp_run_slice(void){
         // run yet at entry. #6 shows CDD8 already filed (k=0:182E1BF8,
         // l16=CB08) — filed between #5 and #6. The SELF ([+20]=self) forms
         // after #6. Next: watch [+20] of CDD8 across #5/#6/#7 entries.
+        // fzDX: lr is IDENTICAL (AEE0) at #5/#6/#7 — same return address, so
+        // the re-invocation is NOT a fresh caller: the walk's own AEDC bl
+        // AC44 re-enters (walk recurses via its native call chain) rather
+        // than returning. The insert path loops back into the walk top.
         if(pc==0x8000AC44u){
           static unsigned _v=0; _v++;
           // fzDJ: uncap fully (was first-4 + every-5M) — the DVD request is
