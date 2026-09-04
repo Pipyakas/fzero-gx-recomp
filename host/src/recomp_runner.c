@@ -846,8 +846,9 @@ void recomp_run_slice(void){
             if(_have){ uint32_t s16=0,s20=0;
               guest_read32(_pr6+16u,&s16); guest_read32(_pr29+20u,&s20);
               if(_pr6==_pr29){ static unsigned _n=0;
-                if(++_n<=6) fprintf(stderr,"[ins] post-lap r6==r29==0x%08X [r6+16]=0x%08X [r29+20]=0x%08X %s\n",
-                  _pr6, s16, s20, (s16==_pr6&&s20==_pr29)?"SELF-LINK":"linked-ok"); }
+                uint32_t s16b=0; guest_read32(_pr29+16u,&s16b);
+                if(++_n<=6) fprintf(stderr,"[ins] post-lap r6==r29==0x%08X [r6+16]=0x%08X [r29+20]=0x%08X [r29+16]=0x%08X %s\n",
+                  _pr6, s16, s20, s16b, (s16==_pr6&&s20==_pr29)?"SELF-LINK":"linked-ok"); }
               else { static unsigned _m=0;
                 // Log the +20 next field of the WALK node (r6): the insert
                 // path's AD48 store ([r29+20]=r6) + AD58 ([r29+20]=r6 into
