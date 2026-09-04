@@ -896,6 +896,13 @@ void recomp_run_slice(void){
             // never fires => the chunk returns via budget BEFORE reaching it,
             // then re-dispatches at AD1C). The walk never takes the ADE4 exit
             // because the budget return always lands back at AD1C first.
+            // fzDL sequencing: each AC44 walk is preceded by a FRESH 18D1C
+            // callback + 16920 + AE94 (#6 follows #2-callback, not #1) — so
+            // the caller DOES re-invoke per callback; laps 1-4 within ONE
+            // walk are the native ADD8 advance, and the "restart at head" is
+            // the NEXT callback's fresh walk, not a re-walk. The SELF tail
+            // is written once (insert #5) and re-walked by later callbacks'
+            // walks that keep resolving the same way (frozen key).
             if(!_haveR30){ _haveR30=1; _firstR30=g_cpu.gpr[30]; }
             if(_laps<=8||_laps%20000000==0) fprintf(stderr,"[ins] lap=%u r6=0x%08X r30=0x%08X r4=0x%08X firstR30=0x%08X %s tb=0x%llX\n",
               _laps, g_cpu.gpr[6], g_cpu.gpr[30], g_cpu.gpr[4], _firstR30,
