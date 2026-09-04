@@ -919,6 +919,14 @@ void recomp_run_slice(void){
               guest_read32(_pr6+16u,&s16); guest_read32(_pr29+20u,&s20);
               if(_pr6==_pr29){ static unsigned _n=0;
                 uint32_t s16b=0; guest_read32(_pr29+16u,&s16b);
+                // fzDQ: r29(new) at AD1C is the NEW node for the CURRENT lap
+                // (set by AC44 entry r29=r3 before the walk). On the tail lap
+                // r6 advances CB08->CDD8 via ADD8, then the NEXT lap shows
+                // r6==r29==CDD8: the walk re-entered at head but r6 reads CDD8
+                // because [CB08+20] was already overwritten with CDD8 by the
+                // insert. The SELF-link forms when the walk reaches CDD8 and
+                // compares CDD8 vs CDD8 (key == its own key => EQ => ADD8
+                // advance to [CDD8+20], which the insert just set to CDD8).
                 if(++_n<=6) fprintf(stderr,"[ins] post-lap r6==r29==0x%08X [r6+16]=0x%08X [r29+20]=0x%08X [r29+16]=0x%08X %s\n",
                   _pr6, s16, s20, s16b, (s16==_pr6&&s20==_pr29)?"SELF-LINK":"linked-ok"); }
               else { static unsigned _m=0;
