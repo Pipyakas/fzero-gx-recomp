@@ -512,6 +512,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         guest_read32(cpu->gpr[13]-31456u,&c);
         fprintf(stderr,"[watch] 179BC m64=%u m60=%u m56=%u lr=0x%08X (#%u)\n", a, b, c, cpu->lr, _b); }
       return false; }
+    // fzEJ: 18820 is the m64 consume-or-skip branch (cmpwi r0,0 / bc 18868).
+    // 18830 = consume path (m64!=0), 18868 = skip path (m64==0, re-issue).
+    if(addr==0x80018820u||addr==0x80018830u||addr==0x80018868u){
+      static unsigned _g1=0,_g2=0,_g3=0; unsigned *c=addr==0x80018820u?&_g1:addr==0x80018830u?&_g2:&_g3; (*c)++;
+      if(*c<=4){ uint32_t a=0; guest_read32(cpu->gpr[13]-31464u,&a);
+        fprintf(stderr,"[watch] %s m64=%u lr=0x%08X (#%u)\n",
+          addr==0x80018820u?"18820":addr==0x80018830u?"18830-consume":"18868-skip", a, cpu->lr, *c); }
+      return false; }
     if(addr==0x8001A2ECu||addr==0x800169ACu){
       static unsigned _k1=0,_k2=0; unsigned *c=addr==0x8001A2ECu?&_k1:&_k2; (*c)++;
       if(*c<=4){ uint32_t v64=0; guest_read32(cpu->gpr[13]-31464u,&v64);
