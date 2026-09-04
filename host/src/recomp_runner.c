@@ -951,6 +951,11 @@ void recomp_run_slice(void){
         // sequence writes node12, and with what value?
         if(pc==0x8001142Cu||pc==0x8001140Cu||pc==0x8001146Cu){
           static unsigned _s=0; _s++;
+          // fzD3: uncap + split by lr — count how many 1142C entries come
+          // from AECC (lr=AECC, the wrapper's timebase call) vs elsewhere.
+          // AECC fires 7x but no lr=AECC entry seen in first-12 cap.
+          { static unsigned _ae=0; if(pc==0x8001142Cu&&g_cpu.lr==0x8000AECCu){ _ae++;
+            if(_ae<=6) fprintf(stderr,"[park] 1142C-from-AECC lr=0x%08X (#ae=%u, #s=%u)\n", g_cpu.lr, _ae, _s); } }
           if(_s<=12){ uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
             fprintf(stderr,"[park] %s r3=0x%08X r4=0x%08X r27=0x%08X r29=0x%08X r30=0x%08X r31=0x%08X node12=0x%08X lr=0x%08X (#%u)\n",
               pc==0x8001142Cu?"1142C":pc==0x8001140Cu?"1140C":"1146C",
