@@ -860,9 +860,14 @@ void recomp_run_slice(void){
                   fprintf(stderr,"[ins] lap r6=0x%08X r29(new)=0x%08X [r6+20]=0x%08X %s\n",
                     _pr6, _pr29, nx, (nx==_pr29)?"INSERTED":"keep-walking"); } } }
             _pr6=g_cpu.gpr[6]; _pr29=g_cpu.gpr[29]; _have=1; } }
+        // fzCV: downcount-expiry probe — log g_cpu.downcount at AD1C hits.
+        // If downcount hovers just above -1000 and AD1C re-dispatches, laps
+        // are budget returns (walk never exits). If it stays high, the walk
+        // DOES exit via AE80 and something re-calls AC44 per lap.
         if(pc==0x8000AD1Cu){
           static unsigned _p=0; _p++;
           if(_p<=6||_p%20000000==0){ uint32_t w8=0xDEADu,w12=0xDEADu,w20=0xDEADu;
+            if(_p==1||_p%20000000==0) fprintf(stderr,"[park] AD1C downcount=%lld (#%u)\n", (long long)g_cpu.downcount, _p);
             guest_read32(g_cpu.gpr[6]+8u, &w8); guest_read32(g_cpu.gpr[6]+12u, &w12); guest_read32(g_cpu.gpr[6]+20u, &w20);
             // Emulate AD24-AD38 128-bit compare. CORRECTED fzBE: subfc r0 =
             // lo = r30-w12; subfe r3 = hi = r4-(w8^0x80000000)+CA; subfe
