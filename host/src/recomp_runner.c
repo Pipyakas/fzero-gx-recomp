@@ -745,21 +745,11 @@ void recomp_run_slice(void){
         // Bounded DVD state-machine probes (remove once M2 answered):
         // 189FC = completion dispatcher (r3=cmd block, +8=type tag);
         // 16018 = waiter flag check; 18CEC = inquiry re-issue site.
-        if(pc==0x800189FCu){ static int _n=0; if(_n<8){ _n++;
-            u32 b=g_cpu.gpr[3]; u32 tag=0; guest_read32(b+8u, &tag);
-            u32 r13=g_cpu.gpr[13], s48=0, s60=0, cb=0;
-            guest_read32(r13-31568u, &s48); guest_read32(r13-31460u, &s60); guest_read32(r13-31488u, &cb);
-            fprintf(stderr,"[dvdsm] 189FC block=0x%08X tag=%u st-31568=%u drv-31460=%u cb-31488=0x%08X lr=0x%08X\n", b, tag, s48, s60, cb, g_cpu.lr);
-            // Jump-table dump (one-shot) + tag histogram: which tags occur
-            // and which row each hits. Finds the row that re-issues inquiry.
-            { static int _k=0; if(_k<1){ _k++;
-                for(unsigned t=0;t<24;t++){ u32 tgt=0; guest_read32(0x80124018u+t*4u, &tgt);
-                  fprintf(stderr,"[dvdsm] jtab[%u] -> 0x%08X\n", t, tgt); } } }
-            { static unsigned _h[32]={0}; static unsigned _tot=0;
-              if(tag<32) _h[tag]++; _tot++;
-              if(_tot==16 || _tot%8192==0){ fprintf(stderr,"[dvdsm] tags tot=%u:", _tot);
-                for(unsigned t=0;t<24;t++) if(_h[t]) fprintf(stderr," %u:%u", t, _h[t]);
-                fprintf(stderr,"\n"); } } } }
+        // fzCS: uncap 189FC (was first-8-only): count entries per lap-phase
+        // (before/after AC44) to learn whether the sink re-runs per lap.
+        if(pc==0x800189FCu){ static unsigned _n=0; _n++;
+          if(_n<=8||_n%5000000==0){ uint32_t head=0; guest_read32(g_cpu.gpr[13]-31800u, &head);
+            fprintf(stderr,"[dvdsm] 189FC hits=%u head=0x%08X tb=0x%llX\n", _n, head, (unsigned long long)g_cpu.timebase); } }
         if(pc==0x80016018u){ static int _n=0; if(_n<8){ _n++;
             u32 fl=0; guest_read32(g_cpu.gpr[13]-31592u, &fl);
             fprintf(stderr,"[dvdsm] 16018 flag-31592=%u DIstatus=0x%08X lr=0x%08X\n", fl, s_di.status, g_cpu.lr); } }
