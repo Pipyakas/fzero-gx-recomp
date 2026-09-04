@@ -589,6 +589,16 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
         addr==0x80018F98u?"18F98-predrain":"18FAC-postdrain", cpu->gpr[3], *c);
       return false; }
+    // fzEYx: 18E34/18E44/18E64 all dispatch on the 18E18 success path
+    // into 18E68. First-fire + counters show whether the frame reaches
+    // the m60 gate at all (vs dying in the 187CC drain at 18E34).
+    if(addr==0x80018E34u||addr==0x80018E44u||addr==0x80018E64u){
+      static unsigned _j[3]={0}; int _i=
+        addr==0x80018E34u?0:addr==0x80018E44u?1:2;
+      const char *_nm[3]={"18E34-predrain","18E44","18E64"};
+      if(++_j[_i]<=2||_j[_i]%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
+        _nm[_i], cpu->gpr[3], _j[_i]);
+      return false; }
     // fzEYw: 18F04/18F14/18F20/18F30/18F34 all dispatch on the 18EDC
     // route into 18F38. First-fire + counters show how far the frame
     // gets before the frame-loop resumes it elsewhere.
