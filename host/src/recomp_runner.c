@@ -988,10 +988,13 @@ void recomp_run_slice(void){
             uint32_t r3h = w8 ^ 0x80000000u, r4 = g_cpu.gpr[4], r30 = g_cpu.gpr[30];
             uint64_t lo = (uint64_t)r30 + (uint64_t)(~w12) + 1u; uint32_t ca = (uint32_t)(lo>>32);
             uint64_t hi = (uint64_t)r4 + (uint64_t)(~r3h) + ca;
-            uint32_t hfold = (uint32_t)hi + (ca?0u:1u); // subfe r3,r4,r4 + ~CA
-            int toADD8 = ((uint32_t)lo==0 && ((hfold==0&&(uint32_t)hi==0)||((uint32_t)hi==0&&(ca==0?1u:0u)==0&&(int32_t)((uint32_t)hi)==0)));
-            // Simpler exact form: EQ iff lo==0 && hi==0 && CA==1 (no borrow).
-            toADD8 = ((uint32_t)lo==0 && (uint32_t)hi==0 && ca==1);
+            (void)hi;
+            // fzEB: the AD28-AD34 subfc/subfe/neg chain is an unsigned >=
+            // compare of (r4:r30) vs (node8^0x8000:node12): advance (ADD8)
+            // while search key >= node key. ca==1 means r30 >= node12
+            // (no borrow out of the low subtract). Old == emulation was
+            // inverted and mislabeled every advancing lap as ADE4.
+            int toADD8 = (r4 > r3h) || (r4 == r3h && ca == 1);
             fprintf(stderr,"[park] AD1C r6=0x%08X node8=0x%08X node12=0x%08X next20=0x%08X r29(new)=0x%08X r30=0x%08X r4=0x%08X lo=%08X hi=%08X ca=%u cmp=%s lr=0x%08X (#%u)\n",
               g_cpu.gpr[6], w8, w12, w20, g_cpu.gpr[29], r30, r4, (uint32_t)lo, (uint32_t)hi, ca, toADD8?"ADD8":"ADE4", g_cpu.lr, _p); }
           // One-shot collision check: heap head (-31800(r13)) vs our thread.
@@ -1076,6 +1079,15 @@ void recomp_run_slice(void){
         // Retrace => +675000 timebase ticks + VI status bit asserted.
         // Interrupt delivery stays parked (s_os_dispatch_interrupt==0) so
         // VIWaitForRetrace-style loops observe level-triggered pending.
+        // fzEA: +1 timebase tick per slice-loop iteration (deterministic:
+        // the dispatch count is deterministic). Back-to-back DI completions
+        // (INQUIRY then STOPMOTOR) otherwise share one frozen tb, so the
+        // AECC key (r6=r28+tb) re-walks identically onto the just-filed
+        // node (CDD8 vs CDD8 => EQ => ADD8 => SELF tail => park). Native
+        // runs never dispatch, so intra-walk keys stay stable; inter-walk
+        // keys differ by iteration count. VI retrace cadence below is
+        // untouched.
+        g_cpu.timebase += 1u;
         dol_vi_clock_advance(&s_vi_clock, 1u);
         {
             u64 ticks = 0;
