@@ -589,6 +589,13 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
         addr==0x80018F98u?"18F98-predrain":"18FAC-postdrain", cpu->gpr[3], *c);
       return false; }
+    // fzEYz: 19500 (dispatched entry) files block+40 (slot) at 19538.
+    // If it never fires, no slot is ever registered and 18E04 always
+    // skips the invoke — the completion can never call back up.
+    if(addr==0x80019500u){
+      static unsigned _n=0; if(++_n<=4) fprintf(stderr,"[dvdsm] 19500 slot-reg r3=0x%08X r5=0x%08X lr=0x%08X (#%u)\n",
+        cpu->gpr[3], cpu->gpr[5], cpu->lr, _n);
+      return false; }
     // fzEYy: 18DD8/18E08 (both dispatched) bracket the 18DFC slot-load.
     // m48=0 and block+40=0 observed, so 18E04 skips the blrl to 18E18 —
     // confirm 18E08 never fires (slot always null).
