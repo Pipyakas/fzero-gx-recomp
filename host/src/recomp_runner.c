@@ -837,13 +837,15 @@ void recomp_run_slice(void){
           if(_e<=12){ uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
             fprintf(stderr,"[watch] AECC r6=0x%08X r28=0x%08X r4=0x%08X r27=0x%08X r29=0x%08X r30=0x%08X node12=0x%08X tb=0x%llX lr=0x%08X (#%u)\n",
               g_cpu.gpr[6], g_cpu.gpr[28], g_cpu.gpr[4], g_cpu.gpr[27], g_cpu.gpr[29], g_cpu.gpr[30], n12, (unsigned long long)g_cpu.timebase, g_cpu.lr, _e); } }
-        // fzD2/fzD9: AEB8 dispatches (downcount); AEDC does NOT (fall-through
-        // `bl`, no downcount — same visibility class as AEC8). AEB8 fires 7x
-        // (4 healthy + 3 DVD), AECC fires 7x, AC44 fires 4x (healthy only).
-        // Zero [hle] exc/fallback lines: no exception either. So the DVD path
-        // runs AECC key math natively then the chunk RETURNS (budget) before
-        // reaching AC44's dispatch point — or takes AEE0's blr first. Either
-        // way the DVD request never completes a single AC44 walk.
+        // fzD2/fzD9/fzDA: AEB8 dispatches (downcount); AEDC does NOT
+        // (fall-through `bl`, no downcount — same as AEC8). Counts: AEB8 7x
+        // (4 healthy + 3 DVD), AECC 7x, AC44 4x (healthy only). Zero [hle]
+        // exc/fallback: no exception. fzDA correction: the DVD AECC is
+        // followed *in the same slice* by AD1C laps with r29(new)=CDD8 — i.e.
+        // the DVD path DOES reach AC44's walk natively (chain AECC->AEDC->
+        // AC44 runs without dispatch), files the tail, and parks. The "4 vs
+        // 7" gap is probe visibility (AC44 probe capped at first-4), NOT a
+        // divert. The walk runs; the SELF tail traps it.
         if(pc==0x8000AEB8u){
           static unsigned _b=0; if(++_b<=8) fprintf(stderr,"[watch] AEB8 lr=0x%08X r27=0x%08X tb=0x%llX (#%u)\n",
             g_cpu.lr, g_cpu.gpr[27], (unsigned long long)g_cpu.timebase, _b); }
