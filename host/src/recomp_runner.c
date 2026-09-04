@@ -522,6 +522,16 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         cpu->gpr[3], cpu->gpr[4], cpu->ctr, cpu->lr, *c);
       if(*c%5000000==0) fprintf(stderr,"[watch] 19FA4-loop 19FC4=%u 19FCC=%u 19FDC=%u 19FE0=%u 19FE4=%u 19FEC=%u\n", _m1,_m2,_m3,_m4,_m5,_m6);
       return false; }
+    // fzEYi: 1A178 is the error-report chain. Split caller LR: 18D58 means
+    // r3==0x10 entry error; 18DA0/19230 mean result-bit/state errors.
+    if(addr==0x8001A178u){
+      static unsigned _n=0; _n++;
+      if(_n<=8||_n%5000000==0){ uint32_t m60=0,m56=0,m52=0;
+        guest_read32(cpu->gpr[13]-31460u,&m60); guest_read32(cpu->gpr[13]-31456u,&m56);
+        guest_read32(cpu->gpr[13]-31452u,&m52);
+        fprintf(stderr,"[dvdsm] 1A178 lr=0x%08X r3=0x%08X m60=%u m56=%u m52=0x%08X (#%u)\n",
+          cpu->lr, cpu->gpr[3], m60, m56, m52, _n); }
+      return false; }
     // fzEW: 16850 (dispatched entry) is the error-report fn called from
     // MANY legs (18E60, 188E4, 188FC, 189BC...). Caller lr distinguishes:
     // lr=18E60 => m56==0 error leg; lr=188E4/188FC => m48-cascade legs.
