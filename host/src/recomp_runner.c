@@ -1266,10 +1266,15 @@ void recomp_run_slice(void){
               if(dol_hle_poll_nested(&g_cpu)){ cbpc = g_cpu.pc; continue; }
               break; }
             // fzEX: trace frame resumptions (budget returns re-enter here
-            // with a mid-body pc). First-8 + every-200k: the pc sequence IS
+            // with a mid-body pc). First-40 + every-200k: the pc sequence IS
             // the body's executed path (entries + back-edges only).
-            { static unsigned _f=0; if(++_f<=24||_f%200000==0)
-              fprintf(stderr,"[cb] resume #%u pc=0x%08X lr=0x%08X\n", _f, g_cpu.pc, g_cpu.lr); }
+            // fzEY: ALSO trace RETURNS: when a frame's blr lands on
+            // HLE_CALLBACK_RETURN the loop exits silently — log the
+            // return address so completion vs runaway is visible.
+            { static unsigned _f=0; if(++_f<=40||_f%200000==0){
+              uint32_t _lr = g_cpu.lr;
+              fprintf(stderr,"[cb] resume #%u pc=0x%08X lr=0x%08X%s\n", _f, g_cpu.pc, _lr,
+                _lr==HLE_CALLBACK_RETURN?" ->RET":""); } }
             dolrecomp_call(&g_cpu, g_cpu.pc); }
           dol_hle_handle_callback_return(&g_cpu, HLE_CALLBACK_RETURN);
           continue; }
