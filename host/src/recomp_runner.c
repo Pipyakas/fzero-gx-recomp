@@ -464,6 +464,17 @@ static void hle_fallback(CPUState* cpu, uint32_t raw, uint32_t cia){
     ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
 }
 static bool hle_host_call(CPUState* cpu, uint32_t addr){
+    // fzD5/fzD6: AEDC is `bl AC44` with NO downcount (falls through from
+    // AED8, no dispatch point) — like AEC8 it NEVER fires as a probe, healthy
+    // or DVD. The chain AECC->AED0->AED4->AED8->AEDC->AC44 runs native inside
+    // one dolrecomp_call; only AC44 (downcount) dispatches next. So the DVD
+    // request passing AECC but never reaching AC44 means it diverts INSIDE
+    // that native chain — candidates: exception in AED0 adde/AED4/AED8, or
+    // the chunk RETURNS early (downcount budget) between AECC and AC44.
+    if(addr==0x8000AEDCu){
+      static unsigned _a=0; if(++_a<=8) fprintf(stderr,"[watch] AEDC r3=0x%08X r6=0x%08X r7=0x%08X r30=0x%08X lr=0x%08X (#%u)\n",
+        cpu->gpr[3], cpu->gpr[6], cpu->gpr[7], cpu->gpr[30], cpu->lr, _a);
+      return false; }
     // host_call runs inside dolrecomp_call BEFORE the chunk — but only for
     // the pc that STARTED the call (fzBN: AD60/AD68 never fire because the
     // chunk runs them natively mid-chain). Same visibility as slice-loop
