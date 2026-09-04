@@ -889,6 +889,11 @@ void recomp_run_slice(void){
             // walk DOES advance; the question is what happens AFTER the tail
             // (CB08.next==0): does the next lap start at head (re-walk from
             // AC44 entry, r6=head) or continue from tail (r6=tail)?
+            // fzDG finding: lap 5 r6=head AGAIN after CB08.next==0 at lap 4 —
+            // and the exit block ADE4->AE80 runs natively (AE80 dispatches but
+            // never fires => the chunk returns via budget BEFORE reaching it,
+            // then re-dispatches at AD1C). The walk never takes the ADE4 exit
+            // because the budget return always lands back at AD1C first.
             if(!_haveR30){ _haveR30=1; _firstR30=g_cpu.gpr[30]; }
             if(_laps<=8||_laps%20000000==0) fprintf(stderr,"[ins] lap=%u r6=0x%08X r30=0x%08X r4=0x%08X firstR30=0x%08X %s tb=0x%llX\n",
               _laps, g_cpu.gpr[6], g_cpu.gpr[30], g_cpu.gpr[4], _firstR30,
