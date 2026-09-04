@@ -534,6 +534,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _y=0; if(++_y<=4) fprintf(stderr,"[dvdsm] 19760 r3=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->lr, _y);
       return false; }
+    // fzEXd: 18F38 computes r3&1 (dispatched) — dump r3/bit per
+    // completion. r3=0 => EQ => F3C falls to 18F40 route; r3 odd => to
+    // 1920C. F38-fallthrough labels never fire, so expect r3 odd here.
+    if(addr==0x80018F38u){
+      static unsigned _e=0; if(++_e<=4||_e%5000000==0)
+        fprintf(stderr,"[dvdsm] 18F38 r3=%u bit=%u (#%u)\n",
+          cpu->gpr[3], cpu->gpr[3]&1u, _e);
+      return false; }
     // fzEXc: F38-fallthrough route (all dispatched): 18FB0/18FD8/18FF8/
     // 19000/19048/19050/190AC/19118. Dumps per label show how far each
     // completion gets down the post-18F38 chain.
