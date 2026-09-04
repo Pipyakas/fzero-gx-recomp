@@ -589,6 +589,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
         addr==0x80018F98u?"18F98-predrain":"18FAC-postdrain", cpu->gpr[3], *c);
       return false; }
+    // fzEYy: 18DD8/18E08 (both dispatched) bracket the 18DFC slot-load.
+    // m48=0 and block+40=0 observed, so 18E04 skips the blrl to 18E18 —
+    // confirm 18E08 never fires (slot always null).
+    if(addr==0x80018DD8u||addr==0x80018E08u){
+      static unsigned _k1=0,_k2=0; unsigned *c=addr==0x80018DD8u?&_k1:&_k2; (*c)++;
+      if(*c<=3||*c%5000000==0){ uint32_t s=0; guest_read32(cpu->gpr[30]+40u,&s);
+        fprintf(stderr,"[dvdsm] %s slot40=0x%08X r30=0x%08X (#%u)\n",
+          addr==0x80018DD8u?"18DD8":"18E08-invoke", s, cpu->gpr[30], *c); }
+      return false; }
     // fzEYx: 18E34/18E44/18E64 all dispatch on the 18E18 success path
     // into 18E68. First-fire + counters show whether the frame reaches
     // the m60 gate at all (vs dying in the 187CC drain at 18E34).
