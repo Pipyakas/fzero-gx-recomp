@@ -202,11 +202,14 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         // we leave the inquiry body's stale -1/10 in place, the stop
         // completion branch mis-resolves. Write the SDK END(0) marker: the
         // stop body has no native writer of its own (it only reads).
-        // fzCL: EXP — also set drive-substate m56 (-31456) = 1. The 18DB0
-        // path (18DD4 bc->18E40 when m56==0) skips the 18DD8 block that files
-        // state 10 and invokes the slot; with m56=1 the body proceeds to
-        // 18DD8 (stw -31448=7, -31456=0, file b12=10, invoke slot via blrl).
-        // Reversible one-line experiment: remove if park persists.
+        // fzCL/fzCP: EXP — set drive-substate m56 (-31456) = 1. Full branch
+        // chain with m60=14, r3=0: 18D70 (m60==3? no) -> 18D74; 18D7C
+        // (m60!=0xF? yes, cr==false -> NO branch) -> falls to 18D80;
+        // rlwinm. bit30 of r3=0 -> EQ -> 18D84 branches to 18DB0; 18DBC
+        // (m60!=0xF -> NO) -> 18DC4 sets m32=1; 18DD4 (m56==0? with EXP
+        // m56=1 -> NO branch) -> SHOULD reach 18DD8 — but m48 stays 0, so
+        // either the chain diverges earlier or 18DD8's stores don't stick.
+        // Reversible experiment: remove if park persists.
         { uint32_t blk=0x8015BF20u; guest_read32(cmd->cpu->gpr[13]-31488u, &blk);
           if(blk < GC_RAM_BASE) blk = 0x8015BF20u;
           uint32_t ba = blk + 12u;
