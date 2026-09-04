@@ -589,6 +589,13 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
         addr==0x80018F98u?"18F98-predrain":"18FAC-postdrain", cpu->gpr[3], *c);
       return false; }
+    // fzEYz3: 1A31C (dispatched entry) + 1A338 gate the 1A340 cascade
+    // into the 19500 slot-register call. Entry lr names the caller.
+    if(addr==0x8001A31Cu||addr==0x8001A338u){
+      static unsigned _p1=0,_p2=0; unsigned *c=addr==0x8001A31Cu?&_p1:&_p2; (*c)++;
+      if(*c<=4) fprintf(stderr,"[dvdsm] %s r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x8001A31Cu?"1A31C-entry":"1A338", cpu->gpr[3], cpu->gpr[4], cpu->lr, *c);
+      return false; }
     // fzEYz2: 1A344/1A348/1A354/1A37C/1A3AC/1A3B0/1A3B8/1A3C0/1A3CC all
     // dispatch on the 1A340 cascade into the 19500 slot-register call.
     // 1A340/1A3DC themselves are native branch labels (no downcount).
