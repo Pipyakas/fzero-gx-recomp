@@ -534,6 +534,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _y=0; if(++_y<=4) fprintf(stderr,"[dvdsm] 19760 r3=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->lr, _y);
       return false; }
+    // fzEXf: 18F8C (dispatched) reads the m52 callback slot; 18F94
+    // branches to 18FA8-drain vs 18F98. m52 dump tells whether a slot cb
+    // is even registered for this completion.
+    if(addr==0x80018F8Cu){
+      static unsigned _s=0; if(++_s<=4||_s%5000000==0){ uint32_t m=0;
+        guest_read32(cpu->gpr[13]-31452u,&m);
+        fprintf(stderr,"[dvdsm] 18F8C m52=0x%08X (#%u)\n", m, _s); }
+      return false; }
     // fzEXe: 18F98/18FAC (both dispatched) bracket the 18FA8 drain call.
     // If 18F98 fires but 18FAC never does, the frame never returns from
     // the 187CC drain on the F38 route (drain runs away, as in fzEX).
