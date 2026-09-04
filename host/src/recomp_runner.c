@@ -202,13 +202,22 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         // we leave the inquiry body's stale -1/10 in place, the stop
         // completion branch mis-resolves. Write the SDK END(0) marker: the
         // stop body has no native writer of its own (it only reads).
+        // fzCL: EXP — also set drive-substate m56 (-31456) = 1. The 18DB0
+        // path (18DD4 bc->18E40 when m56==0) skips the 18DD8 block that files
+        // state 10 and invokes the slot; with m56=1 the body proceeds to
+        // 18DD8 (stw -31448=7, -31456=0, file b12=10, invoke slot via blrl).
+        // Reversible one-line experiment: remove if park persists.
         { uint32_t blk=0x8015BF20u; guest_read32(cmd->cpu->gpr[13]-31488u, &blk);
           if(blk < GC_RAM_BASE) blk = 0x8015BF20u;
           uint32_t ba = blk + 12u;
           if(ba >= GC_RAM_BASE && ba + 4u > ba && ba + 4u <= GC_RAM_BASE + cmd->cpu->ram_size){
             uint8_t* p = cmd->cpu->ram + (ba - GC_RAM_BASE);
             p[0]=0; p[1]=0; p[2]=0; p[3]=0; }
-          { static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR blk=0x%08X b12=END -> 18D1C\n", blk); _m++; } }
+          { uint32_t ma = cmd->cpu->gpr[13]-31456u;
+            if(ma >= GC_RAM_BASE && ma + 4u > ma && ma + 4u <= GC_RAM_BASE + cmd->cpu->ram_size){
+              uint8_t* q = cmd->cpu->ram + (ma - GC_RAM_BASE);
+              q[0]=0; q[1]=0; q[2]=0; q[3]=1; } }
+          { static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR blk=0x%08X b12=END m56=1 -> 18D1C\n", blk); _m++; } }
           dol_hle_queue_guest_callback(0x80018D1Cu, 0, blk); }
         return DOL_DI_COMMAND_COMPLETE;
     }
