@@ -589,6 +589,16 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
         addr==0x80018F98u?"18F98-predrain":"18FAC-postdrain", cpu->gpr[3], *c);
       return false; }
+    // fzEYv: 19240/19270/19330 are dispatched but never fire — the frame
+    // never returns from the 18FA8 drain on the F38 route, same as fzEX.
+    // m60-dump confirms the gate state each completion would test.
+    if(addr==0x80019240u||addr==0x80019270u||addr==0x80019330u){
+      static unsigned _g1=0,_g2=0,_g3=0;
+      unsigned *c=addr==0x80019240u?&_g1:addr==0x80019270u?&_g2:&_g3; (*c)++;
+      if(*c<=3||*c%5000000==0){ uint32_t m=0; guest_read32(cpu->gpr[13]-31460u,&m);
+        fprintf(stderr,"[dvdsm] %s m60=%u (#%u)\n",
+          addr==0x80019240u?"19240":addr==0x80019270u?"19270":"19330", m, *c); }
+      return false; }
     // fzEXd: 18F38 computes r3&1 (dispatched) — dump r3/bit per
     // completion. r3=0 => EQ => F3C falls to 18F40 route; r3 odd => to
     // 1920C. F38-fallthrough labels never fire, so expect r3 odd here.
