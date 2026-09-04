@@ -517,6 +517,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         cpu->gpr[3], cpu->gpr[4], cpu->ctr, cpu->lr, *c);
       if(*c%5000000==0) fprintf(stderr,"[watch] 19FA4-loop 19FC4=%u 19FCC=%u 19FDC=%u 19FE0=%u 19FE4=%u 19FEC=%u\n", _m1,_m2,_m3,_m4,_m5,_m6);
       return false; }
+    // fzEN: 187E8 dispatches (downcount) with r3 = 19FA4's return value.
+    // r3==0 -> 187F0 early-out (no restore); r3!=0 -> 187FC continue to
+    // the 18804/18820 restore-consumption gates. This decides the drain.
+    if(addr==0x800187E8u){
+      static unsigned _q=0; if(++_q<=4){ uint32_t a=0; guest_read32(cpu->gpr[13]-31464u,&a);
+        fprintf(stderr,"[watch] 187E8 19FA4ret=r3=%d m64=%u lr=0x%08X (#%u)\n",
+          (int32_t)cpu->gpr[3], a, cpu->lr, _q); }
+      return false; }
     // fzEL: 187E8-gate sides (187F0 = 19FA4-ret==0 early-out; 187FC =
     // continue) and 18804-gate sides (18808 vs 1881C) — which way?
     if(addr==0x800187F0u||addr==0x800187FCu||addr==0x80018808u||addr==0x8001881Cu){
