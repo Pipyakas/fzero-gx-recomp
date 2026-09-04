@@ -1005,6 +1005,11 @@ void recomp_run_slice(void){
         // (Re-walk AD60/AD68 probe moved to hle_host_call: those labels are
         // mid-chain natives that never START a dolrecomp_call, so slice-loop
         // if() probes can't see them; host_call runs before every chunk.)
+        // fzDR: AE80 has ZERO hits across every log ever (also ADE0 silent)
+        // while AD1C fires 20M+ — the back-edge always takes the native goto
+        // (downcount never <= -1000 there), so the exit path is starved by
+        // construction, not by guest logic. Candidate fix: credit downcount
+        // at the ADE0 back-edge so the exit can dispatch (see next).
         if(pc==0x8000ADE0u||pc==0x8000AE80u){
           static unsigned _e3=0,_e5=0;
           unsigned *c = pc==0x8000ADE0u?&_e3:&_e5; (*c)++;
