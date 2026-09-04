@@ -196,12 +196,19 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
     // advances instead of retrying down an error path.
     if((c0 & 0xFF000000u) == 0xE3000000u){
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec STOPMOTOR (complete)\n"); _n++; } }
-        // Same contract as inquiry: dispatch the LOW-LEVEL callback 18D1C
-        // (r3=0, r4=block) so it does drive-state bookkeeping, then invokes
-        // the slot itself. Direct slot dispatch skips bookkeeping (fzAA).
+        // fzCD: STOPMOTOR completion must ALSO mark block+12. The inquiry
+        // callback's native body writes b12=-1 on its error path and +10 on
+        // success; the stop callback's body reads block+12 the same way. If
+        // we leave the inquiry body's stale -1/10 in place, the stop
+        // completion branch mis-resolves. Write the SDK END(0) marker: the
+        // stop body has no native writer of its own (it only reads).
         { uint32_t blk=0x8015BF20u; guest_read32(cmd->cpu->gpr[13]-31488u, &blk);
           if(blk < GC_RAM_BASE) blk = 0x8015BF20u;
-          { static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR blk=0x%08X -> 18D1C\n", blk); _m++; } }
+          uint32_t ba = blk + 12u;
+          if(ba >= GC_RAM_BASE && ba + 4u > ba && ba + 4u <= GC_RAM_BASE + cmd->cpu->ram_size){
+            uint8_t* p = cmd->cpu->ram + (ba - GC_RAM_BASE);
+            p[0]=0; p[1]=0; p[2]=0; p[3]=0; }
+          { static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR blk=0x%08X b12=END -> 18D1C\n", blk); _m++; } }
           dol_hle_queue_guest_callback(0x80018D1Cu, 0, blk); }
         return DOL_DI_COMMAND_COMPLETE;
     }
