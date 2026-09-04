@@ -525,16 +525,17 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[watch] 187E8 19FA4ret=r3=%d m64=%u lr=0x%08X (#%u)\n",
           (int32_t)cpu->gpr[3], a, cpu->lr, _q); }
       return false; }
-    // fzES: m48 cascade (188A8: m48==8->189CC, m48==6->18904, else 189B0;
-    // 188BC: error-report leg). m48==0 here, so neither side was expected —
-    // watch all four landings + 189CC to learn the real route.
-    if(addr==0x800188A8u||addr==0x800188BCu||addr==0x800188B8u||addr==0x80018904u||addr==0x800189B0u||addr==0x800189CCu){
-      static unsigned _s1=0,_s2=0,_s3=0,_s4=0,_s5=0,_s6=0;
-      unsigned *c=addr==0x800188A8u?&_s1:addr==0x800188BCu?&_s2:addr==0x800188B8u?&_s3:addr==0x80018904u?&_s4:addr==0x800189B0u?&_s5:&_s6; (*c)++;
-      if(*c<=3){ uint32_t m=0; guest_read32(cpu->gpr[13]-31448u,&m);
-        fprintf(stderr,"[watch] %s m48=%u lr=0x%08X (#%u)\n",
-          addr==0x800188A8u?"188A8":addr==0x800188BCu?"188BC":addr==0x800188B8u?"188B8":addr==0x80018904u?"18904":addr==0x800189B0u?"189B0":"189CC",
-          m, cpu->lr, *c); }
+    // fzES: m48 cascade — 18868 (entry, dispatched) runs native through
+    // 18880/1888C/18890/18898/1889C to 188A4->189CC. Only dispatched
+    // labels (18868/18880/1888C/18890/18898/1889C/188A4/188A8/189CC) fire.
+    if(addr==0x80018868u||addr==0x80018880u||addr==0x8001888Cu||addr==0x80018890u||addr==0x80018898u||addr==0x8001889Cu||addr==0x800188A4u||addr==0x800188A8u||addr==0x800188BCu||addr==0x800188B8u||addr==0x80018904u||addr==0x800189B0u||addr==0x800189CCu){
+      static unsigned _s[13]={0}; int _i=
+        addr==0x80018868u?0:addr==0x80018880u?1:addr==0x8001888Cu?2:addr==0x80018890u?3:
+        addr==0x80018898u?4:addr==0x8001889Cu?5:addr==0x800188A4u?6:addr==0x800188A8u?7:
+        addr==0x800188BCu?8:addr==0x800188B8u?9:addr==0x80018904u?10:addr==0x800189B0u?11:12;
+      const char *_nm[13]={"18868","18880","1888C","18890","18898","1889C","188A4","188A8","188BC","188B8","18904","189B0","189CC"};
+      if(++_s[_i]<=3){ uint32_t m=0; guest_read32(cpu->gpr[13]-31448u,&m);
+        fprintf(stderr,"[watch] %s m48=%u lr=0x%08X (#%u)\n", _nm[_i], m, cpu->lr, _s[_i]); }
       return false; }
     // fzEL: 187E8-gate sides (187F0 = 19FA4-ret==0 early-out; 187FC =
     // continue) and 18804-gate sides (18808 vs 1881C) — which way?
