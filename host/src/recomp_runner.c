@@ -589,6 +589,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
         addr==0x80018F98u?"18F98-predrain":"18FAC-postdrain", cpu->gpr[3], *c);
       return false; }
+    // fzEYzd: 1A3F4/1A418/1A43C (all dispatched) lead to the second
+    // 19500 call at 1A450. Entry lr names which upper layer registers.
+    if(addr==0x8001A3F4u||addr==0x8001A418u||addr==0x8001A43Cu){
+      static unsigned _r[3]={0}; int _i=
+        addr==0x8001A3F4u?0:addr==0x8001A418u?1:2;
+      const char *_nm[3]={"1A3F4-entry","1A418","1A43C"};
+      if(++_r[_i]<=3) fprintf(stderr,"[dvdsm] %s r3=0x%08X lr=0x%08X (#%u)\n",
+        _nm[_i], cpu->gpr[3], cpu->lr, _r[_i]);
+      return false; }
     // fzEYz3: 1A31C (dispatched entry) + 1A338 gate the 1A340 cascade
     // into the 19500 slot-register call. Entry lr names the caller.
     if(addr==0x8001A31Cu||addr==0x8001A338u){
