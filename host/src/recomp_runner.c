@@ -830,6 +830,12 @@ void recomp_run_slice(void){
         // the re-invocation is NOT a fresh caller: the walk's own AEDC bl
         // AC44 re-enters (walk recurses via its native call chain) rather
         // than returning. The insert path loops back into the walk top.
+        // fzDY correction: AEE0 is the return address for ALL THREE bl AC44
+        // sites is FALSE — AEDC's lr IS AEE0 (AEDC+4), but AF58/B1DC have
+        // their own lr (AF5C/B1E0). All 7 hits show lr=AEE0 => all come via
+        // AEDC (the AE94 wrapper's call), none via AF58/B1DC. The 3 bl sites
+        // serve different callers (AE94-wrapper vs AExx others); only the
+        // wrapper's path runs here.
         if(pc==0x8000AC44u){
           static unsigned _v=0; _v++;
           // fzDJ: uncap fully (was first-4 + every-5M) — the DVD request is
