@@ -900,7 +900,11 @@ void recomp_run_slice(void){
             // callback + 16920 + AE94 (#6 follows #2-callback, not #1) — so
             // the caller DOES re-invoke per callback; laps 1-4 within ONE
             // walk are the native ADD8 advance, and the "restart at head" is
-            // the NEXT callback's fresh walk, not a re-walk. The SELF tail
+            // the NEXT callback's fresh walk, not a re-walk. (fzDM
+            // correction: only 3 callbacks fire but 7 AE94 + 25M laps run —
+            // callbacks #1-3 deliver the sink+walks, then the FIRST callback's
+            // native body never returns (7FFF0000 sentinel in live backchain)
+            // and its internal walk spins natively. The SELF tail
             // is written once (insert #5) and re-walked by later callbacks'
             // walks that keep resolving the same way (frozen key).
             if(!_haveR30){ _haveR30=1; _firstR30=g_cpu.gpr[30]; }
