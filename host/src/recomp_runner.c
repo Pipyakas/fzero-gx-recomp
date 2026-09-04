@@ -1265,6 +1265,11 @@ void recomp_run_slice(void){
             if(g_cpu.pc == HLE_CALLBACK_RETURN){
               if(dol_hle_poll_nested(&g_cpu)){ cbpc = g_cpu.pc; continue; }
               break; }
+            // fzEX: trace frame resumptions (budget returns re-enter here
+            // with a mid-body pc). First-8 + every-200k: the pc sequence IS
+            // the body's executed path (entries + back-edges only).
+            { static unsigned _f=0; if(++_f<=24||_f%200000==0)
+              fprintf(stderr,"[cb] resume #%u pc=0x%08X lr=0x%08X\n", _f, g_cpu.pc, g_cpu.lr); }
             dolrecomp_call(&g_cpu, g_cpu.pc); }
           dol_hle_handle_callback_return(&g_cpu, HLE_CALLBACK_RETURN);
           continue; }
