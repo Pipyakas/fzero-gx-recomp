@@ -884,9 +884,14 @@ void recomp_run_slice(void){
             // fzDD: capture the walk's search key (r30) on lap 1 vs lap 2+:
             // identical => the SAME request re-walks (caller re-invokes with
             // stale key); drifting => fresh requests per lap.
+            // fzDE: ALSO capture r6 (walk position): laps advance CA90..CB08
+            // then wrap to head — the +20 chain is walked via ADD8, so the
+            // walk DOES advance; the question is what happens AFTER the tail
+            // (CB08.next==0): does the next lap start at head (re-walk from
+            // AC44 entry, r6=head) or continue from tail (r6=tail)?
             if(!_haveR30){ _haveR30=1; _firstR30=g_cpu.gpr[30]; }
-            if(_laps<=4||_laps%20000000==0) fprintf(stderr,"[ins] lap=%u r30=0x%08X r4=0x%08X firstR30=0x%08X %s tb=0x%llX\n",
-              _laps, g_cpu.gpr[30], g_cpu.gpr[4], _firstR30,
+            if(_laps<=8||_laps%20000000==0) fprintf(stderr,"[ins] lap=%u r6=0x%08X r30=0x%08X r4=0x%08X firstR30=0x%08X %s tb=0x%llX\n",
+              _laps, g_cpu.gpr[6], g_cpu.gpr[30], g_cpu.gpr[4], _firstR30,
               (g_cpu.gpr[30]==_firstR30)?"SAME-KEY":"NEW-KEY", (unsigned long long)g_cpu.timebase);
             if(_laps%5000000==0){ uint32_t head=0; guest_read32(g_cpu.gpr[13]-31800u, &head);
               fprintf(stderr,"[ins] laps=%u head=0x%08X tb=0x%llX\n", _laps, head, (unsigned long long)g_cpu.timebase); }
