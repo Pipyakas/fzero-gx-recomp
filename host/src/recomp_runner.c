@@ -513,6 +513,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[watch] %s m64=%u lr=0x%08X (#%u)\n",
           addr==0x80018830u?"18830-consume":"18868-skip", a, cpu->lr, *c); }
       return false; }
+    // fzEK: 19FA4/19F04 are dispatched entries inside the 187CC drain —
+    // do they dispatch (i.e. does the 19FA4 call at 187E4 reach them)?
+    if(addr==0x80019FA4u||addr==0x80019F04u){
+      static unsigned _j1=0,_j2=0; unsigned *c=addr==0x80019FA4u?&_j1:&_j2; (*c)++;
+      if(*c<=3){ uint32_t a=0; guest_read32(cpu->gpr[13]-31464u,&a);
+        fprintf(stderr,"[watch] %s m64=%u r3=0x%08X lr=0x%08X (#%u)\n",
+          addr==0x80019FA4u?"19FA4":"19F04", a, cpu->gpr[3], cpu->lr, *c); }
+      return false; }
     if(addr==0x8001A2ECu||addr==0x800169ACu){
       static unsigned _k1=0,_k2=0; unsigned *c=addr==0x8001A2ECu?&_k1:&_k2; (*c)++;
       if(*c<=4){ uint32_t v64=0; guest_read32(cpu->gpr[13]-31464u,&v64);
