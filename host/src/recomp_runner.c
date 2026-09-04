@@ -821,6 +821,11 @@ void recomp_run_slice(void){
         // entry: DVD path's AECC addc wraps (r6=0x80000000, CA=1?) vs healthy
         // no-carry. If DVD r5 != 0 while healthy r5 == 0, the wrapped carry
         // poisoned the key high word and AC44 files under a corrupt key.
+        // fzDW: entries #1-4 (healthy) show blank new nodes; #5 (DVD) shows
+        // the SAME blank new node CDD8 (k=0:0, links 0) — the insert has NOT
+        // run yet at entry. #6 shows CDD8 already filed (k=0:182E1BF8,
+        // l16=CB08) — filed between #5 and #6. The SELF ([+20]=self) forms
+        // after #6. Next: watch [+20] of CDD8 across #5/#6/#7 entries.
         if(pc==0x8000AC44u){
           static unsigned _v=0; _v++;
           // fzDJ: uncap fully (was first-4 + every-5M) — the DVD request is
