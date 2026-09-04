@@ -598,6 +598,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(++_r[_i]<=3) fprintf(stderr,"[dvdsm] %s r3=0x%08X lr=0x%08X (#%u)\n",
         _nm[_i], cpu->gpr[3], cpu->lr, _r[_i]);
       return false; }
+    // fzEYze: 19AF8/19B00 (both dispatched) bracket the chunk_6 curblk
+    // writer at native 19B08 (same lis/addi constant as 17998). If they
+    // fire, the second curblk writer runs; dump r0 (value filed).
+    if(addr==0x80019AF8u||addr==0x80019B00u){
+      static unsigned _n1=0,_n2=0; unsigned *c=addr==0x80019AF8u?&_n1:&_n2; (*c)++;
+      if(*c<=3) fprintf(stderr,"[dvdsm] %s r0=%u r3=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x80019AF8u?"19AF8":"19B00", cpu->gpr[0], cpu->gpr[3], cpu->lr, *c);
+      return false; }
     // fzEYz3: 1A31C (dispatched entry) + 1A338 gate the 1A340 cascade
     // into the 19500 slot-register call. Entry lr names the caller.
     if(addr==0x8001A31Cu||addr==0x8001A338u){
