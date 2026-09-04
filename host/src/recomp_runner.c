@@ -466,8 +466,13 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // (trampoline preempts AC34 with garbage r30). Only r3/r4 are args.
     // Fix (fzBU): zero the callback's non-arg regs at poll time.
     if(addr==0x80018D1Cu){
-      static unsigned _d=0; if(++_d<=6) fprintf(stderr,"[watch] 18D1C r3=0x%08X r4=0x%08X r30=0x%08X r31=0x%08X tb=0x%llX lr=0x%08X (#%u)\n",
-        cpu->gpr[3], cpu->gpr[4], cpu->gpr[30], cpu->gpr[31], (unsigned long long)cpu->timebase, cpu->lr, _d);
+      static unsigned _d=0; if(++_d<=4||_d%5000000==0){
+        uint32_t v60=0,v56=0,v36=0,v32=0,b12=0; uint32_t blk=cpu->gpr[4];
+        guest_read32(cpu->gpr[13]-31460u,&v60); guest_read32(cpu->gpr[13]-31456u,&v56);
+        guest_read32(cpu->gpr[13]-31436u,&v36); guest_read32(cpu->gpr[13]-31432u,&v32);
+        if(blk) guest_read32(blk+12u,&b12);
+        fprintf(stderr,"[watch] 18D1C r3=%u blk=0x%08X b12=%u m60=%u m56=%u m36=%u m32=%u r30=0x%08X r31=0x%08X (#%u)\n",
+          cpu->gpr[3], blk, b12, v60, v56, v36, v32, cpu->gpr[30], cpu->gpr[31], _d); }
       return false; }
     // Re-walk key probe (fzBJ): AD60 publishes head=r29 then AD68 rebuilds
     // the search key from the NEW node (r6=[r29+12], r0=[r29+8]).
@@ -766,8 +771,10 @@ void recomp_run_slice(void){
           if(*c<=3){
             u32 s56=0,s60=0; guest_read32(g_cpu.gpr[13]-31568u, &s56); guest_read32(g_cpu.gpr[13]-31460u, &s60);
             fprintf(stderr,"[dvdsm] %s r3=%u r4=0x%08X st=%u drv=%u (#%u)\n", pc==0x80018F38u?"18F38":pc==0x80018E68u?"18E68":pc==0x8001920Cu?"1920C":pc==0x80018DB0u?"18DB0":pc==0x80018D1Cu?"18D1C":pc==0x80018CC8u?"18CC8":"18D68", g_cpu.gpr[3], g_cpu.gpr[4], s56, s60, *c); }
-          if((*c%2000)==0){ u32 s56=0,s60=0,cb=0,cc=0; guest_read32(g_cpu.gpr[13]-31568u, &s56); guest_read32(g_cpu.gpr[13]-31460u, &s60); guest_read32(g_cpu.gpr[13]-31488u, &cb); guest_read32(g_cpu.gpr[13]-31584u, &cc);
-            fprintf(stderr,"[dvdsm] counts 18D1C=%u 18D68=%u 18DB0=%u 18E68=%u 18F38=%u 1920C=%u 18CC8=%u st=%u drv=%u curblk=0x%08X cb-31584=0x%08X\n", _c5,_c7,_c4,_c2,_c1,_c3,_c6, s56, s60, cb, cc); } }
+          if((*c%2000)==0){ u32 s56=0,s60=0,cb=0,cc=0; guest_read32(g_cpu.gpr[13]-31568u, &s56); guest_read32(g_cpu.gpr[13]-31460u, &s60); guest_read32(g_cpu.gpr[13]-31488u, &cb); guest_read32(g_cpu.gpr[13]-31584u, &cc); } }
+        // (fzC7 slice-loop duplicate of the host_call 18D1C probe above —
+        // removed: host_call fires first and owns the [watch] tag. Kept the
+        // note so nobody re-adds it.)
         // AD1C-park probe (fzAE): guest sits in a 64-bit list walk
         // (AD1C lwz r0,8(r6) / AD20 lwz r5,12(r6), subfc/subfe/neg. on CR0,
         // exit at AD38->ADD8). Dump r6 node ptr, node[8], node[12], and CR —
