@@ -908,9 +908,11 @@ void recomp_run_slice(void){
             // is written once (insert #5) and re-walked by later callbacks'
             // walks that keep resolving the same way (frozen key).
             if(!_haveR30){ _haveR30=1; _firstR30=g_cpu.gpr[30]; }
-            if(_laps<=8||_laps%20000000==0) fprintf(stderr,"[ins] lap=%u r6=0x%08X r30=0x%08X r4=0x%08X firstR30=0x%08X %s tb=0x%llX\n",
+            // fzDN: sample r1 (stack) per lap: nesting => r1 declines as the
+            // callback body re-enters per lap; flat loop => r1 constant.
+            if(_laps<=8||_laps%20000000==0) fprintf(stderr,"[ins] lap=%u r6=0x%08X r30=0x%08X r4=0x%08X firstR30=0x%08X %s r1=0x%08X tb=0x%llX\n",
               _laps, g_cpu.gpr[6], g_cpu.gpr[30], g_cpu.gpr[4], _firstR30,
-              (g_cpu.gpr[30]==_firstR30)?"SAME-KEY":"NEW-KEY", (unsigned long long)g_cpu.timebase);
+              (g_cpu.gpr[30]==_firstR30)?"SAME-KEY":"NEW-KEY", g_cpu.gpr[1], (unsigned long long)g_cpu.timebase);
             if(_laps%5000000==0){ uint32_t head=0; guest_read32(g_cpu.gpr[13]-31800u, &head);
               fprintf(stderr,"[ins] laps=%u head=0x%08X tb=0x%llX\n", _laps, head, (unsigned long long)g_cpu.timebase); }
             if(_have){ uint32_t s16=0,s20=0;
