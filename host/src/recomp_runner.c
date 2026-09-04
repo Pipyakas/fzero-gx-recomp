@@ -869,8 +869,11 @@ void recomp_run_slice(void){
           static unsigned _r1=0,_r2=0; unsigned *c = pc==0x80018CF0u?&_r1:&_r2; (*c)++;
           if(*c<=4||*c%5000000==0) fprintf(stderr,"[dvdsm] %s hit lr=0x%08X (#%u)\n",
             pc==0x80018CF0u?"18CF0":"18D0C", g_cpu.lr, *c); }
-        // fzEP: m56-branch sides — 18DD8 (m56!=0, success path) vs 18E40
-        // (m56==0, error-ish path). m56 distinguishes INQUIRY#1 from later.
+        // fzEQ: 18E4C (m56==0 path's error-report leg, dispatched) — if it
+        // fires, the body takes the error leg every completion.
+        if(pc==0x80018E4Cu){
+          static unsigned _q=0; if(++_q<=4||_q%5000000==0)
+            fprintf(stderr,"[dvdsm] 18E4C-errorleg r3=%u r4=0x%08X (#%u)\n", g_cpu.gpr[3], g_cpu.gpr[4], _q); }
         if(pc==0x80018DD8u||pc==0x80018E40u){
           static unsigned _p1=0,_p2=0; unsigned *c=pc==0x80018DD8u?&_p1:&_p2; (*c)++;
           if(*c<=4) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
