@@ -986,9 +986,9 @@ void recomp_run_slice(void){
           static unsigned _e3=0,_e5=0;
           unsigned *c = pc==0x8000ADE0u?&_e3:&_e5; (*c)++;
           if(*c<=3||*c%5000000==0){ uint32_t head=0; guest_read32(g_cpu.gpr[13]-31800u, &head);
-            fprintf(stderr,"[park] %s hit head=0x%08X r6=0x%08X r29=0x%08X r30=0x%08X (#%u)\n",
+            fprintf(stderr,"[park] %s hit head=0x%08X r6=0x%08X r29=0x%08X r30=0x%08X downcount=%lld (#%u)\n",
               pc==0x8000ADE0u?"ADE0(back-edge)":"AE80(return)",
-              head, g_cpu.gpr[6], g_cpu.gpr[29], g_cpu.gpr[30], *c); } }
+              head, g_cpu.gpr[6], g_cpu.gpr[29], g_cpu.gpr[30], (long long)g_cpu.downcount, *c); } }
         // 1142C/1140C = sync primitives called INSIDE the park path (fzAN:
         // node12's first write happens with pc=1142C). Dispatched (chunk_3
         // entries). Dump regs + node12 at each hit — which call in the park
