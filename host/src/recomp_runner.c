@@ -879,8 +879,15 @@ void recomp_run_slice(void){
         // The re-walk is identical because the insert's key compare keeps
         // resolving the same way: r30/r4 (search key) never change per lap.
         { static uint32_t _pr6=0,_pr29=0; static int _have=0;
-          static unsigned _laps=0;
+          static unsigned _laps=0; static uint32_t _firstR30=0; static int _haveR30=0;
           if(pc==0x8000AD1Cu){ _laps++;
+            // fzDD: capture the walk's search key (r30) on lap 1 vs lap 2+:
+            // identical => the SAME request re-walks (caller re-invokes with
+            // stale key); drifting => fresh requests per lap.
+            if(!_haveR30){ _haveR30=1; _firstR30=g_cpu.gpr[30]; }
+            if(_laps<=4||_laps%20000000==0) fprintf(stderr,"[ins] lap=%u r30=0x%08X r4=0x%08X firstR30=0x%08X %s tb=0x%llX\n",
+              _laps, g_cpu.gpr[30], g_cpu.gpr[4], _firstR30,
+              (g_cpu.gpr[30]==_firstR30)?"SAME-KEY":"NEW-KEY", (unsigned long long)g_cpu.timebase);
             if(_laps%5000000==0){ uint32_t head=0; guest_read32(g_cpu.gpr[13]-31800u, &head);
               fprintf(stderr,"[ins] laps=%u head=0x%08X tb=0x%llX\n", _laps, head, (unsigned long long)g_cpu.timebase); }
             if(_have){ uint32_t s16=0,s20=0;
