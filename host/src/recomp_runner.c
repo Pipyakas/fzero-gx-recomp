@@ -534,6 +534,17 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _y=0; if(++_y<=4) fprintf(stderr,"[dvdsm] 19760 r3=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->lr, _y);
       return false; }
+    // fzEXc: F38-fallthrough route (all dispatched): 18FB0/18FD8/18FF8/
+    // 19000/19048/19050/190AC/19118. Dumps per label show how far each
+    // completion gets down the post-18F38 chain.
+    if(addr==0x80018FB0u||addr==0x80018FD8u||addr==0x80018FF8u||addr==0x80019000u||addr==0x80019048u||addr==0x80019050u||addr==0x800190ACu||addr==0x80019118u){
+      static unsigned _v[8]={0}; int _i=
+        addr==0x80018FB0u?0:addr==0x80018FD8u?1:addr==0x80018FF8u?2:addr==0x80019000u?3:
+        addr==0x80019048u?4:addr==0x80019050u?5:addr==0x800190ACu?6:7;
+      const char *_nm[8]={"18FB0","18FD8","18FF8","19000","19048","19050","190AC","19118"};
+      if(++_v[_i]<=2||_v[_i]%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u r4=0x%08X (#%u)\n",
+        _nm[_i], cpu->gpr[3], cpu->gpr[4], _v[_i]);
+      return false; }
     // fzEXb: 18DB0/18DC4/18DCC all dispatch (compares native between).
     // 18DB0 zeroes m36; 18DC4 sets m32=1 (m60!=15 path); 18DCC reads m56.
     // m32/m36 dumps distinguish first completion from later ones.
