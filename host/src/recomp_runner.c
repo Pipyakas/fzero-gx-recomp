@@ -589,6 +589,16 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
         addr==0x80018F98u?"18F98-predrain":"18FAC-postdrain", cpu->gpr[3], *c);
       return false; }
+    // fzEYw: 18F04/18F14/18F20/18F30/18F34 all dispatch on the 18EDC
+    // route into 18F38. First-fire + counters show how far the frame
+    // gets before the frame-loop resumes it elsewhere.
+    if(addr==0x80018F04u||addr==0x80018F14u||addr==0x80018F20u||addr==0x80018F30u||addr==0x80018F34u){
+      static unsigned _h[5]={0}; int _i=
+        addr==0x80018F04u?0:addr==0x80018F14u?1:addr==0x80018F20u?2:addr==0x80018F30u?3:4;
+      const char *_nm[5]={"18F04","18F14","18F20","18F30","18F34"};
+      if(++_h[_i]<=2||_h[_i]%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
+        _nm[_i], cpu->gpr[3], _h[_i]);
+      return false; }
     // fzEYv: 19240/19270/19330 are dispatched but never fire — the frame
     // never returns from the 18FA8 drain on the F38 route, same as fzEX.
     // m60-dump confirms the gate state each completion would test.
