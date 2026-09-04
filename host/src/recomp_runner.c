@@ -869,6 +869,13 @@ void recomp_run_slice(void){
           static unsigned _r1=0,_r2=0; unsigned *c = pc==0x80018CF0u?&_r1:&_r2; (*c)++;
           if(*c<=4||*c%5000000==0) fprintf(stderr,"[dvdsm] %s hit lr=0x%08X (#%u)\n",
             pc==0x80018CF0u?"18CF0":"18D0C", g_cpu.lr, *c); }
+        // fzEP: m56-branch sides — 18DD8 (m56!=0, success path) vs 18E40
+        // (m56==0, error-ish path). m56 distinguishes INQUIRY#1 from later.
+        if(pc==0x80018DD8u||pc==0x80018E40u){
+          static unsigned _p1=0,_p2=0; unsigned *c=pc==0x80018DD8u?&_p1:&_p2; (*c)++;
+          if(*c<=4) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
+            pc==0x80018DD8u?"18DD8-m56set":"18E40-m56zero", g_cpu.gpr[3], *c);
+          if((*c%5000000)==0) fprintf(stderr,"[dvdsm] m56branch 18DD8=%u 18E40=%u\n", _p1,_p2); }
         if(pc==0x80018F38u||pc==0x80018E68u||pc==0x8001920Cu||pc==0x80018DB0u||pc==0x80018D1Cu||pc==0x80018CC8u||pc==0x80018D68u){
           static unsigned _c1=0,_c2=0,_c3=0,_c4=0,_c5=0,_c6=0,_c7=0;
           unsigned *c = pc==0x80018F38u?&_c1:pc==0x80018E68u?&_c2:pc==0x8001920Cu?&_c3:pc==0x80018DB0u?&_c4:pc==0x80018D1Cu?&_c5:pc==0x80018CC8u?&_c6:&_c7;
