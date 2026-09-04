@@ -181,14 +181,9 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           // (b12 flip-flops 0/-1 across callbacks) and may corrupt the
           // state the body expects. Lengths at +28/+32 are untouched.
           // (A374 slot check is moot: body invokes slot itself via blrl.)
-          { uint32_t t1 = block + 28u, t2 = block + 32u; uint32_t len = cmd->dma_length;
-            if(t1+4u <= GC_RAM_BASE + cmd->cpu->ram_size && t2+4u <= GC_RAM_BASE + cmd->cpu->ram_size){
-              uint8_t* q1 = cmd->cpu->ram + (t1 - GC_RAM_BASE);
-              uint8_t* q2 = cmd->cpu->ram + (t2 - GC_RAM_BASE);
-              q1[0]=(uint8_t)(len>>24); q1[1]=(uint8_t)(len>>16); q1[2]=(uint8_t)(len>>8); q1[3]=(uint8_t)len;
-              q2[0]=(uint8_t)(len>>24); q2[1]=(uint8_t)(len>>16); q2[2]=(uint8_t)(len>>8); q2[3]=(uint8_t)len;
-            }
-            { static int _m=0; if(_m<2){ _m++; fprintf(stderr,"[di] INQUIRY blk=0x%08X len=%u cb=0x%08X (b12 left for native body)\n", block, len, cb); } } }
+          // fzEE: block fully untouched (no +12/+28/+32 writes; the 19270
+          // success gate needs [blk+32]==[blk+20] and any HLE write breaks it)
+            { static int _m=0; if(_m<2){ _m++; fprintf(stderr,"[di] INQUIRY blk=0x%08X cb=0x80018D1C (block untouched, fzEE)\n", block); } }
           dol_hle_queue_guest_callback(cb, 0, block); }
         return DOL_DI_COMMAND_COMPLETE;
     }
@@ -511,8 +506,11 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         guest_read32(cpu->gpr[13]-31464u,&v64); guest_read32(cpu->gpr[13]-31448u,&v48);
         if(blk){ guest_read32(blk+12u,&b12); }
         uint32_t b8=0; if(blk) guest_read32(blk+8u,&b8);
-        fprintf(stderr,"[watch] 18D1C r3=%u blk=0x%08X b8=%u b12=%u m64=%u m60=%u m56=%u m48=%u m36=%u m32=%u r30=0x%08X r31=0x%08X (#%u)\n",
-          cpu->gpr[3], blk, b8, b12, v64, v60, v56, v48, v36, v32, cpu->gpr[30], cpu->gpr[31], _d); }
+        // fzEE: 19270 success gate is [blk+32]==[blk+20] (xfer lens). Dump
+        // +20/+28/+32 to see if our INQUIRY +28/+32=len write breaks it.
+        uint32_t b20=0,b28=0,b32=0; if(blk){ guest_read32(blk+20u,&b20); guest_read32(blk+28u,&b28); guest_read32(blk+32u,&b32); }
+        fprintf(stderr,"[watch] 18D1C r3=%u blk=0x%08X b8=%u b12=%d b20=%u b28=%u b32=%u m64=%u m60=%u m56=%u m48=%u m36=%u m32=%u r30=0x%08X r31=0x%08X (#%u)\n",
+          cpu->gpr[3], blk, b8, (int32_t)b12, b20, b28, b32, v64, v60, v56, v48, v36, v32, cpu->gpr[30], cpu->gpr[31], _d); }
       return false; }
     // Re-walk key probe (fzBJ): AD60 publishes head=r29 then AD68 rebuilds
     // the search key from the NEW node (r6=[r29+12], r0=[r29+8]).
