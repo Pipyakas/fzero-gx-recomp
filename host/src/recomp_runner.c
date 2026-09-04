@@ -811,7 +811,18 @@ void recomp_run_slice(void){
               guest_read32(_pr6+16u,&s16); guest_read32(_pr29+20u,&s20);
               if(_pr6==_pr29){ static unsigned _n=0;
                 if(++_n<=6) fprintf(stderr,"[ins] post-lap r6==r29==0x%08X [r6+16]=0x%08X [r29+20]=0x%08X %s\n",
-                  _pr6, s16, s20, (s16==_pr6&&s20==_pr29)?"SELF-LINK":"linked-ok"); } }
+                  _pr6, s16, s20, (s16==_pr6&&s20==_pr29)?"SELF-LINK":"linked-ok"); }
+              else { static unsigned _m=0;
+                // Log the +20 next field of the WALK node (r6): the insert
+                // path's AD48 store ([r29+20]=r6) + AD58 ([r29+20]=r6 into
+                // successor) chain should have left [r6+20] pointing at the
+                // new node when the lap inserted before r6's successor.
+                // (fzC1 correction: the walk link is +20, not +16; +16 is
+                // the head-parent back-pointer. The earlier "stale" readings
+                // sampled the wrong field.)
+                if(++_m<=8){ uint32_t nx=0; guest_read32(_pr6+20u,&nx);
+                  fprintf(stderr,"[ins] lap r6=0x%08X r29(new)=0x%08X [r6+20]=0x%08X %s\n",
+                    _pr6, _pr29, nx, (nx==_pr29)?"INSERTED":"keep-walking"); } } }
             _pr6=g_cpu.gpr[6]; _pr29=g_cpu.gpr[29]; _have=1; } }
         if(pc==0x8000AD1Cu){
           static unsigned _p=0; _p++;
