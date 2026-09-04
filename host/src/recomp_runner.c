@@ -465,6 +465,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _m=0; if(++_m<=6) fprintf(stderr,"[watch] 16920 r3=0x%08X r30=0x%08X r31=0x%08X tb=0x%llX lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->gpr[30], cpu->gpr[31], (unsigned long long)cpu->timebase, cpu->lr, _m);
       return false; }
+    // fzCH: 17958-chain (gate writer 1799C inside) — dispatched entry?
+    // Dump r3 (the 0x10-compare arg) + r13 vars to see if it ever runs and
+    // with what state. Its callers: 18D60 bl 17958 (inside 18D1C body).
+    if(addr==0x80017958u){
+      static unsigned _h=0; if(++_h<=6){ uint32_t v64=0,v60=0;
+        guest_read32(cpu->gpr[13]-31464u,&v64); guest_read32(cpu->gpr[13]-31460u,&v60);
+        fprintf(stderr,"[watch] 17958 r3=0x%08X m64=%u m60=%u lr=0x%08X (#%u)\n",
+          cpu->gpr[3], v64, v60, cpu->lr, _h); }
+      return false; }
     // 18D1C = low-level completion entry (dispatched). fzBT: r30 IDENTICAL
     // at 18D1C and 16920 (0x1823CF40) — rides in on the SAVED slice context
     // (trampoline preempts AC34 with garbage r30). Only r3/r4 are args.
