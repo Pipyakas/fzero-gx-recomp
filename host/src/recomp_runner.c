@@ -772,7 +772,7 @@ void recomp_run_slice(void){
         // learn what key the node is filed under (r30/r25 vs node12 drift).
         if(pc==0x8000AC44u){
           static unsigned _v=0; _v++;
-          if(_v<=4){ uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
+          if(_v<=4||_v%5000000==0){ uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
             fprintf(stderr,"[watch] AC44 req r3=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X node12=0x%08X lr=0x%08X tb=0x%llX (#%u)\n",
               g_cpu.gpr[3], g_cpu.gpr[5], g_cpu.gpr[6], g_cpu.gpr[7], n12, g_cpu.lr, (unsigned long long)g_cpu.timebase, _v); } }
         // AEC8 is `bl 1142C` with NO downcount (falls through from AEC4, no
