@@ -506,6 +506,17 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           addr==0x80017958u?"17958":addr==0x800179BCu?"179BC":addr==0x800187CCu?"187CC":"18820",
           a, b, cpu->lr, *c); }
       return false; }
+    // fzEM: 19FA4 body loop (19F2C/19F7C/19F84-bdnz/19F90-exit) — 19FA4
+    // never returns to 187E8 (187F0/187FC never fire), so it may spin in
+    // its own list walk like AD1C did. Uncapped counters + first dumps.
+    if(addr>=0x80019F2Cu&&addr<=0x80019F90u&&(addr==0x80019F2Cu||addr==0x80019F7Cu||addr==0x80019F84u||addr==0x80019F88u||addr==0x80019F90u)){
+      static unsigned _m1=0,_m2=0,_m3=0,_m4=0,_m5=0;
+      unsigned *c=addr==0x80019F2Cu?&_m1:addr==0x80019F7Cu?&_m2:addr==0x80019F84u?&_m3:addr==0x80019F88u?&_m4:&_m5; (*c)++;
+      if(*c<=2) fprintf(stderr,"[watch] %s r3=0x%08X r4=0x%08X ctr=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x80019F2Cu?"19F2C":addr==0x80019F7Cu?"19F7C":addr==0x80019F84u?"19F84-bdnz":addr==0x80019F88u?"19F88":"19F90-exit",
+        cpu->gpr[3], cpu->gpr[4], cpu->ctr, cpu->lr, *c);
+      if(*c%5000000==0) fprintf(stderr,"[watch] 19F-loop 19F2C=%u 19F7C=%u 19F84=%u 19F88=%u 19F90=%u\n", _m1,_m2,_m3,_m4,_m5);
+      return false; }
     // fzEL: 187E8-gate sides (187F0 = 19FA4-ret==0 early-out; 187FC =
     // continue) and 18804-gate sides (18808 vs 1881C) — which way?
     if(addr==0x800187F0u||addr==0x800187FCu||addr==0x80018808u||addr==0x8001881Cu){
