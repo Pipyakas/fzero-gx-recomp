@@ -163,9 +163,14 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         if(a < cmd->cpu->ram_size) a |= GC_RAM_BASE;
         if(a >= GC_RAM_BASE && a + 32 <= GC_RAM_BASE + cmd->cpu->ram_size){
             uint8_t* d = cmd->cpu->ram + (a - GC_RAM_BASE);
-            d[0]=0; d[1]=1; d[2]=0; d[3]=0;
-            d[4]=0x20; d[5]=0x01; d[6]=0x10; d[7]=0x23;
-            memset(d+8, 0, 24);
+            // Dolphin DVDInterface::Inquiry writes these exact words:
+            // revision/device=0x00000002, release=0x20060526,
+            // version=0x41000000. Use the production emulator values;
+            // the earlier guessed 1/0/20011023 omitted the version word.
+            d[0]=0x00; d[1]=0x00; d[2]=0x00; d[3]=0x02;
+            d[4]=0x20; d[5]=0x06; d[6]=0x05; d[7]=0x26;
+            d[8]=0x41; d[9]=0x00; d[10]=0x00; d[11]=0x00;
+            memset(d+12, 0, 20);
         }
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec INQUIRY -> guest 0x%08X\n", cmd->dma_address); _n++; } }
         // EXP fzV: drop the r13-31592=1 flag raise. Rationale: it fires on
