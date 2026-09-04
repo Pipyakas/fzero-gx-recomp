@@ -526,6 +526,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[dvdsm] 16850-errorleg r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->gpr[4], cpu->lr, _v);
       return false; }
+    // fzEZa: 19760 (dispatched entry, chunk_6) is the motor wrapper that
+    // returns r3=1 (STOPMOTOR path needs r3 odd at 18D80). Does it run?
+    if(addr==0x80019760u){
+      static unsigned _y=0; if(++_y<=4) fprintf(stderr,"[dvdsm] 19760 r3=0x%08X lr=0x%08X (#%u)\n",
+        cpu->gpr[3], cpu->lr, _y);
+      return false; }
     // fzEZ: 18D80 (dispatched) computes (r3>>1)&1 and 18D84 branches to
     // 18DB0 (main body) vs 18D88 (STOPMOTOR path). r3=0 here => bit clear
     // => 18DB0 always; the STOPMOTOR path needs r3 odd (r3=1 from the
