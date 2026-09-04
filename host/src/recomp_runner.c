@@ -216,10 +216,18 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         // fzEG: STOPMOTOR block fully untouched (same reasoning as fzEE
         // for INQUIRY: the native body files its own b12/m56 state, and HLE
         // pre-writes corrupt the branch resolution).
+        // fzEH: dispatch the COMMAND's saved callback from r13-31584, not a
+        // hardcoded 18D1C. 16A38 saves its r4 (0x80018D1C) there for INQUIRY;
+        // 16920 saves its r3 (0x80017958) there for STOPMOTOR. Hardcoding
+        // 18D1C for motor completions bypasses the 17958->1799C(m64=1)->
+        // 187CC-sink chain that advances the drive state (m60 stuck at 14
+        // => 1920C files b12=-1 and re-issues STOPMOTOR forever).
         { uint32_t blk=0x8015BF20u; guest_read32(cmd->cpu->gpr[13]-31488u, &blk);
           if(blk < GC_RAM_BASE) blk = 0x8015BF20u;
-          { static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR blk=0x%08X (block untouched, fzEG) -> 18D1C\n", blk); _m++; } }
-          dol_hle_queue_guest_callback(0x80018D1Cu, 0, blk); }
+          uint32_t cb=0x80017958u; guest_read32(cmd->cpu->gpr[13]-31584u, &cb);
+          if(cb < GC_RAM_BASE) cb = 0x80017958u;
+          { static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR blk=0x%08X (block untouched, fzEG) -> 0x%08X\n", blk, cb); _m++; } }
+          dol_hle_queue_guest_callback(cb, 0, blk); }
         return DOL_DI_COMMAND_COMPLETE;
     }
     if((c0 & 0xFF000000u) == 0xA8000000u
@@ -509,9 +517,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         uint32_t b8=0; if(blk) guest_read32(blk+8u,&b8);
         // fzEE: 19270 success gate is [blk+32]==[blk+20] (xfer lens). Dump
         // +20/+28/+32 to see if our INQUIRY +28/+32=len write breaks it.
+        // fzEH: 19270 reads r30 from -31488 (current-block global), NOT r4.
+        // Dump -31488 + its +20/+32: if curblk != r4, the gate compares a
+        // different block than the one we complete.
         uint32_t b20=0,b28=0,b32=0; if(blk){ guest_read32(blk+20u,&b20); guest_read32(blk+28u,&b28); guest_read32(blk+32u,&b32); }
-        fprintf(stderr,"[watch] 18D1C r3=%u blk=0x%08X b8=%u b12=%d b20=%u b28=%u b32=%u m64=%u m60=%u m56=%u m48=%u m36=%u m32=%u r30=0x%08X r31=0x%08X (#%u)\n",
-          cpu->gpr[3], blk, b8, (int32_t)b12, b20, b28, b32, v64, v60, v56, v48, v36, v32, cpu->gpr[30], cpu->gpr[31], _d); }
+        uint32_t cur=0,c20=0,c32=0; guest_read32(cpu->gpr[13]-31488u,&cur);
+        if(cur){ guest_read32(cur+20u,&c20); guest_read32(cur+32u,&c32); }
+        fprintf(stderr,"[watch] 18D1C r3=%u blk=0x%08X b8=%u b12=%d b20=%u b28=%u b32=%u cur=0x%08X c20=%u c32=%u m64=%u m60=%u m56=%u m48=%u m36=%u m32=%u r30=0x%08X r31=0x%08X (#%u)\n",
+          cpu->gpr[3], blk, b8, (int32_t)b12, b20, b28, b32, cur, c20, c32, v64, v60, v56, v48, v36, v32, cpu->gpr[30], cpu->gpr[31], _d); }
       return false; }
     // Re-walk key probe (fzBJ): AD60 publishes head=r29 then AD68 rebuilds
     // the search key from the NEW node (r6=[r29+12], r0=[r29+8]).
