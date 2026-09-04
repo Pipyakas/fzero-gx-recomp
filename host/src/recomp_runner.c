@@ -822,6 +822,13 @@ void recomp_run_slice(void){
           if(_e<=12){ uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
             fprintf(stderr,"[watch] AECC r6=0x%08X r28=0x%08X r4=0x%08X r27=0x%08X r29=0x%08X r30=0x%08X node12=0x%08X tb=0x%llX lr=0x%08X (#%u)\n",
               g_cpu.gpr[6], g_cpu.gpr[28], g_cpu.gpr[4], g_cpu.gpr[27], g_cpu.gpr[29], g_cpu.gpr[30], n12, (unsigned long long)g_cpu.timebase, g_cpu.lr, _e); } }
+        // fzD2: AEB8/AEDC are dispatched (have downcount). If the DVD request
+        // passes AEB8 but never reaches AEDC, it stalls between (AEC8 bl
+        // 1142C / AECC key math). Count both per lr to split healthy vs DVD.
+        if(pc==0x8000AEB8u||pc==0x8000AEDCu){
+          static unsigned _b1=0,_b2=0; unsigned *c = pc==0x8000AEB8u?&_b1:&_b2; (*c)++;
+          if(*c<=8) fprintf(stderr,"[watch] %s lr=0x%08X r27=0x%08X tb=0x%llX (#%u)\n",
+            pc==0x8000AEB8u?"AEB8":"AEDC", g_cpu.lr, g_cpu.gpr[27], (unsigned long long)g_cpu.timebase, *c); }
         if(pc==0x8000AE94u){
           static unsigned _w=0; _w++;
           if(_w<=12){ uint32_t r5slot=0; guest_read32(g_cpu.gpr[1]+36u+8u, &r5slot);
