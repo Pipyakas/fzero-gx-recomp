@@ -503,6 +503,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[watch] 17958 r3=0x%08X m64=%u m60=%u lr=0x%08X (#%u)\n",
           cpu->gpr[3], v64, v60, cpu->lr, _h); }
       return false; }
+    // fzEI: 1A2EC (dispatched entry, chunk_6) is the sub-call on the 17958
+    // success path — does it dispatch (i.e. does the path reach it)?
+    if(addr==0x8001A2ECu||addr==0x800169ACu){
+      static unsigned _k1=0,_k2=0; unsigned *c=addr==0x8001A2ECu?&_k1:&_k2; (*c)++;
+      if(*c<=4){ uint32_t v64=0; guest_read32(cpu->gpr[13]-31464u,&v64);
+        fprintf(stderr,"[watch] %s m64=%u lr=0x%08X (#%u)\n",
+          addr==0x8001A2ECu?"1A2EC":"169AC", v64, cpu->lr, *c); }
+      return false; }
     // 18D1C = low-level completion entry (dispatched). fzBT: r30 IDENTICAL
     // at 18D1C and 16920 (0x1823CF40) — rides in on the SAVED slice context
     // (trampoline preempts AC34 with garbage r30). Only r3/r4 are args.
