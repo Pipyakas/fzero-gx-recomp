@@ -517,6 +517,17 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         cpu->gpr[3], cpu->gpr[4], cpu->ctr, cpu->lr, *c);
       if(*c%5000000==0) fprintf(stderr,"[watch] 19FA4-loop 19FC4=%u 19FCC=%u 19FDC=%u 19FE0=%u 19FE4=%u 19FEC=%u\n", _m1,_m2,_m3,_m4,_m5,_m6);
       return false; }
+    // fzEU: 18D40/18D58/18D5C/18D64 (all dispatched) sit on the r3==0x10
+    // error path (18D40) and the post-17958 tail (18D58/18D5C/18D64).
+    // 18D40 fires only for error completions; 18D58/18D5C/18D64 fire when
+    // the body routes through 17958. Uncapped by-lr counters.
+    if(addr==0x80018D40u||addr==0x80018D58u||addr==0x80018D5Cu||addr==0x80018D64u){
+      static unsigned _u1=0,_u2=0,_u3=0,_u4=0;
+      unsigned *c=addr==0x80018D40u?&_u1:addr==0x80018D58u?&_u2:addr==0x80018D5Cu?&_u3:&_u4; (*c)++;
+      if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=0x%08X (#%u)\n",
+        addr==0x80018D40u?"18D40-errpath":addr==0x80018D58u?"18D58":addr==0x80018D5Cu?"18D5C":"18D64-tail",
+        cpu->gpr[3], *c);
+      return false; }
     // fzEN: 187E8 dispatches (downcount) with r3 = 19FA4's return value.
     // r3==0 -> 187F0 early-out (no restore); r3!=0 -> 187FC continue to
     // the 18804/18820 restore-consumption gates. This decides the drain.
