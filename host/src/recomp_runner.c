@@ -736,15 +736,17 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(++_s[_i]<=3){ uint32_t m=0; guest_read32(cpu->gpr[13]-31448u,&m);
         fprintf(stderr,"[watch] %s m48=%u lr=0x%08X (#%u)\n", _nm[_i], m, cpu->lr, _s[_i]); }
       return false; }
-    // fzEL: 187E8-gate sides (187F0 = 19FA4-ret==0 early-out; 187FC =
-    // continue) and 18804-gate sides (18808 vs 1881C) — which way?
-    if(addr==0x800187F0u||addr==0x800187FCu||addr==0x80018808u||addr==0x8001881Cu){
-      static unsigned _e1=0,_e2=0,_e3=0,_e4=0;
-      unsigned *c=addr==0x800187F0u?&_e1:addr==0x800187FCu?&_e2:addr==0x80018808u?&_e3:&_e4; (*c)++;
-      if(*c<=3) fprintf(stderr,"[watch] %s lr=0x%08X (#%u)\n",
-        addr==0x800187F0u?"187F0-earlyout":addr==0x800187FCu?"187FC-cont":addr==0x80018808u?"18808":"1881C",
-        cpu->lr, *c);
+    // fzEYza: 187F0/187FC/18808/1881C/18820 all dispatch on the
+    // 19FA4ret=0 early-out (curblk=0) vs continue routes. First-fire +
+    // counters show which the drain takes per completion.
+    if(addr==0x800187F0u||addr==0x800187FCu||addr==0x80018808u||addr==0x8001881Cu||addr==0x80018820u){
+      static unsigned _e[5]={0}; int _i=
+        addr==0x800187F0u?0:addr==0x800187FCu?1:addr==0x80018808u?2:addr==0x8001881Cu?3:4;
+      const char *_nm[5]={"187F0-earlyout","187FC-cont","18808","1881C","18820"};
+      if(++_e[_i]<=3||_e[_i]%5000000==0){ uint32_t c=0; guest_read32(cpu->gpr[13]-31488u,&c);
+        fprintf(stderr,"[dvdsm] %s curblk=0x%08X r3=%u (#%u)\n", _nm[_i], c, cpu->gpr[3], _e[_i]); }
       return false; }
+    // fzEL: superseded by fzEYza above (same labels + curblk dump).
     // fzEJ: 18830 = consume path (m64!=0), 18868 = skip path (m64==0).
     if(addr==0x80018830u||addr==0x80018868u){
       static unsigned _g2=0,_g3=0; unsigned *c=addr==0x80018830u?&_g2:&_g3; (*c)++;
