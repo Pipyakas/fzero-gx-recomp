@@ -751,6 +751,14 @@ void recomp_run_slice(void){
           if((*c%20000)==0) fprintf(stderr,"[dvdsm] sinkchain 19690=%u 19700=%u 187CC=%u\n", _w1,_w2,_w3); }
         // 18F38 = result-bit branch; 18E68 = drive-state branch; 1920C = alt path.
         // Uncapped counters + first-few dumps: which callback path executes?
+        // fzC6: ALSO watch the 18D1C return chain 18CF0/18D0C/16A38 — these
+        // only dispatch when the native 18D1C body RETURNS to them (blr/blrl
+        // landing). If 18CF0/18D0C never dispatch but 18D1C does, the body
+        // never returns (it issues 18CC8->16A38 inline INSTEAD of returning).
+        if(pc==0x80018CF0u||pc==0x80018D0Cu){
+          static unsigned _r1=0,_r2=0; unsigned *c = pc==0x80018CF0u?&_r1:&_r2; (*c)++;
+          if(*c<=4||*c%5000000==0) fprintf(stderr,"[dvdsm] %s hit lr=0x%08X (#%u)\n",
+            pc==0x80018CF0u?"18CF0":"18D0C", g_cpu.lr, *c); }
         if(pc==0x80018F38u||pc==0x80018E68u||pc==0x8001920Cu||pc==0x80018DB0u||pc==0x80018D1Cu||pc==0x80018CC8u||pc==0x80018D68u){
           static unsigned _c1=0,_c2=0,_c3=0,_c4=0,_c5=0,_c6=0,_c7=0;
           unsigned *c = pc==0x80018F38u?&_c1:pc==0x80018E68u?&_c2:pc==0x8001920Cu?&_c3:pc==0x80018DB0u?&_c4:pc==0x80018D1Cu?&_c5:pc==0x80018CC8u?&_c6:&_c7;
