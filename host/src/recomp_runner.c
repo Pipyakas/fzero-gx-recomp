@@ -163,14 +163,12 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         if(a < cmd->cpu->ram_size) a |= GC_RAM_BASE;
         if(a >= GC_RAM_BASE && a + 32 <= GC_RAM_BASE + cmd->cpu->ram_size){
             uint8_t* d = cmd->cpu->ram + (a - GC_RAM_BASE);
-            // Dolphin DVDInterface::Inquiry writes these exact words:
-            // revision/device=0x00000002, release=0x20060526,
-            // version=0x41000000. Use the production emulator values;
-            // the earlier guessed 1/0/20011023 omitted the version word.
-            d[0]=0x00; d[1]=0x00; d[2]=0x00; d[3]=0x02;
-            d[4]=0x20; d[5]=0x06; d[6]=0x05; d[7]=0x26;
-            d[8]=0x41; d[9]=0x00; d[10]=0x00; d[11]=0x00;
-            memset(d+12, 0, 20);
+            // GameCube SDK-era drive values. Dolphin's 0x00000002 /
+            // 0x20060526 / 0x41000000 are explicitly from a Wii and are
+            // unsuitable for F-Zero GX's GC drive-state checks.
+            d[0]=0x00; d[1]=0x01; d[2]=0x00; d[3]=0x00;
+            d[4]=0x20; d[5]=0x01; d[6]=0x10; d[7]=0x23;
+            memset(d+8, 0, 24);
         }
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec INQUIRY -> guest 0x%08X\n", cmd->dma_address); _n++; } }
         // EXP fzV: drop the r13-31592=1 flag raise. Rationale: it fires on
@@ -537,11 +535,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // r3==0x10 entry error; 18DA0/19230 mean result-bit/state errors.
     if(addr==0x8001A178u){
       static unsigned _n=0; _n++;
-      if(_n<=8||_n%5000000==0){ uint32_t m60=0,m56=0,m52=0;
+      if(_n<=8||_n%5000000==0){ uint32_t m60=0,m56=0,m52=0,d0=0,d4=0,d8=0;
         guest_read32(cpu->gpr[13]-31460u,&m60); guest_read32(cpu->gpr[13]-31456u,&m56);
         guest_read32(cpu->gpr[13]-31452u,&m52);
-        fprintf(stderr,"[dvdsm] 1A178 lr=0x%08X r3=0x%08X m60=%u m56=%u m52=0x%08X (#%u)\n",
-          cpu->lr, cpu->gpr[3], m60, m56, m52, _n); }
+        guest_read32(0x8015BF00u,&d0); guest_read32(0x8015BF04u,&d4); guest_read32(0x8015BF08u,&d8);
+        fprintf(stderr,"[dvdsm] 1A178 lr=0x%08X r3=0x%08X m60=%u m56=%u m52=0x%08X drive=%08X/%08X/%08X (#%u)\n",
+          cpu->lr, cpu->gpr[3], m60, m56, m52, d0, d4, d8, _n); }
       return false; }
     // fzEW: 16850 (dispatched entry) is the error-report fn called from
     // MANY legs (18E60, 188E4, 188FC, 189BC...). Caller lr distinguishes:
