@@ -534,6 +534,19 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _y=0; if(++_y<=4) fprintf(stderr,"[dvdsm] 19760 r3=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->lr, _y);
       return false; }
+    // fzEXb: 18DB0/18DC4/18DCC all dispatch (compares native between).
+    // 18DB0 zeroes m36; 18DC4 sets m32=1 (m60!=15 path); 18DCC reads m56.
+    // m32/m36 dumps distinguish first completion from later ones.
+    if(addr==0x80018DB0u||addr==0x80018DC4u||addr==0x80018DCCu){
+      static unsigned _w1=0,_w2=0,_w3=0;
+      unsigned *c=addr==0x80018DB0u?&_w1:addr==0x80018DC4u?&_w2:&_w3; (*c)++;
+      if(*c<=3||*c%5000000==0){ uint32_t m32=0,m36=0,m56=0;
+        guest_read32(cpu->gpr[13]-31432u,&m32); guest_read32(cpu->gpr[13]-31436u,&m36);
+        guest_read32(cpu->gpr[13]-31456u,&m56);
+        fprintf(stderr,"[dvdsm] %s m32=%u m36=%u m56=%u (#%u)\n",
+          addr==0x80018DB0u?"18DB0":addr==0x80018DC4u?"18DC4":"18DCC",
+          m32, m36, m56, *c); }
+      return false; }
     // fzEZb: 18D68/18D74/18D88 are ALL dispatched (18D6C/18D78 compares
     // native). m60==14 here: 18D68 (m60==3?) falls to 18D74 (m60==15?)
     // falls to 18D80. Uncapped counters + first dumps per label.
