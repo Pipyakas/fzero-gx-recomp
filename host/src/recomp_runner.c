@@ -823,7 +823,9 @@ void recomp_run_slice(void){
         // poisoned the key high word and AC44 files under a corrupt key.
         if(pc==0x8000AC44u){
           static unsigned _v=0; _v++;
-          if(_v<=4||_v%5000000==0){ uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
+          // fzDJ: uncap fully (was first-4 + every-5M) — the DVD request is
+          // the 5th AC44 entry and the old cap hid it. Log every entry.
+          { uint32_t n12=0xDEADu; guest_read32(0x8015CDD8u+12u, &n12);
             uint32_t t8=0,t12=0,t16=0,t20=0; uint32_t t=g_cpu.gpr[3];
             guest_read32(t+8u,&t8); guest_read32(t+12u,&t12); guest_read32(t+16u,&t16); guest_read32(t+20u,&t20);
             fprintf(stderr,"[watch] AC44 new=r3=0x%08X k=%08X:%08X l16=0x%08X l20=0x%08X r5=0x%08X r6=0x%08X xerCA=%u node12=0x%08X lr=0x%08X tb=0x%llX (#%u)\n",
