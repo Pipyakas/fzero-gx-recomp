@@ -736,6 +736,19 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(++_s[_i]<=3){ uint32_t m=0; guest_read32(cpu->gpr[13]-31448u,&m);
         fprintf(stderr,"[watch] %s m48=%u lr=0x%08X (#%u)\n", _nm[_i], m, cpu->lr, _s[_i]); }
       return false; }
+    // fzEYzb: 179AC/179C8/179DC (all dispatched) bracket the 17958
+    // post-store chain: 179AC (pre-slot-invoke), 179C8 (m52 path),
+    // 179DC (mtlr slot, pre-blrl). m52/slot dumps show whether the
+    // motor completion invokes a registered callback.
+    if(addr==0x800179ACu||addr==0x800179C8u||addr==0x800179DCu){
+      static unsigned _f[3]={0}; int _i=
+        addr==0x800179ACu?0:addr==0x800179C8u?1:2;
+      const char *_nm[3]={"179AC","179C8","179DC-preslot"};
+      if(++_f[_i]<=3){ uint32_t m=0,s=0;
+        guest_read32(cpu->gpr[13]-31452u,&m); guest_read32(cpu->gpr[12],&s);
+        fprintf(stderr,"[dvdsm] %s m52=0x%08X slot@r12=0x%08X r3=%d (#%u)\n",
+          _nm[_i], m, s, (int32_t)cpu->gpr[3], _f[_i]); }
+      return false; }
     // fzEYza: 187F0/187FC/18808/1881C/18820 all dispatch on the
     // 19FA4ret=0 early-out (curblk=0) vs continue routes. First-fire +
     // counters show which the drain takes per completion.
