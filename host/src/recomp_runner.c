@@ -213,17 +213,12 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         // are read BEFORE the body runs — post-body values unobserved).
         // The park persists through both paths, so the drive-state branch is
         // NOT the park driver. Keep EXP (harmless, matches SDK post-op=1).
+        // fzEG: STOPMOTOR block fully untouched (same reasoning as fzEE
+        // for INQUIRY: the native body files its own b12/m56 state, and HLE
+        // pre-writes corrupt the branch resolution).
         { uint32_t blk=0x8015BF20u; guest_read32(cmd->cpu->gpr[13]-31488u, &blk);
           if(blk < GC_RAM_BASE) blk = 0x8015BF20u;
-          uint32_t ba = blk + 12u;
-          if(ba >= GC_RAM_BASE && ba + 4u > ba && ba + 4u <= GC_RAM_BASE + cmd->cpu->ram_size){
-            uint8_t* p = cmd->cpu->ram + (ba - GC_RAM_BASE);
-            p[0]=0; p[1]=0; p[2]=0; p[3]=0; }
-          { uint32_t ma = cmd->cpu->gpr[13]-31456u;
-            if(ma >= GC_RAM_BASE && ma + 4u > ma && ma + 4u <= GC_RAM_BASE + cmd->cpu->ram_size){
-              uint8_t* q = cmd->cpu->ram + (ma - GC_RAM_BASE);
-              q[0]=0; q[1]=0; q[2]=0; q[3]=1; } }
-          { static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR blk=0x%08X b12=END m56=1 -> 18D1C\n", blk); _m++; } }
+          { static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR blk=0x%08X (block untouched, fzEG) -> 18D1C\n", blk); _m++; } }
           dol_hle_queue_guest_callback(0x80018D1Cu, 0, blk); }
         return DOL_DI_COMMAND_COMPLETE;
     }
