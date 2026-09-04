@@ -951,6 +951,13 @@ void recomp_run_slice(void){
         // HLE 18D1C callback (trampoline preempted AC34). Laps are slice-loop
         // resumptions of that same callback body after budget returns, not
         // fresh allocator calls. The walk never reaches AE80 blr.
+        // fzDT: downcount is INHERITED, not seeded — first AD1C hit shows
+        // -6969693 (whatever the native chain burned since boot), then the
+        // +1000 slice replenish outruns the ~50/lap burn and it climbs to -2.
+        // The walk entered via ONE dolrecomp_call that never returned; every
+        // lap is a downcount-budget return re-dispatched at AD1C. The
+        // -1000 threshold DOES fire (that's the return mechanism) — but it
+        // returns to the SLICE loop, which re-dispatches AD1C, not to AE80.
         if(pc==0x8000AD1Cu){
           static unsigned _p=0; _p++;
           if(_p<=6||_p%20000000==0){ uint32_t w8=0xDEADu,w12=0xDEADu,w20=0xDEADu;
