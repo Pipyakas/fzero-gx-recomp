@@ -871,6 +871,13 @@ void recomp_run_slice(void){
         // node's [r6+16] should hold the new node, and new[+20] the successor.
         // Track prev-lap (r6,r29) vs current [r6+16]/[r29+20]: SELF-link iff
         // [r6+16]==r6 && [r29+20]==r29 with r6==r29.
+        // fzDB: laps #1-#6 walk CA90..CB08 with CB08.next==0 (null tail) yet
+        // lap #7 restarts at head INSTEAD of terminating — the null at CB08
+        // should end the walk (ADDC->ADE0 falls through to ADE4 insert at
+        // the tail, which is correct), but then the NEXT walk should find
+        // the lengthened list and make progress, not re-walk identically.
+        // The re-walk is identical because the insert's key compare keeps
+        // resolving the same way: r30/r4 (search key) never change per lap.
         { static uint32_t _pr6=0,_pr29=0; static int _have=0;
           static unsigned _laps=0;
           if(pc==0x8000AD1Cu){ _laps++;
