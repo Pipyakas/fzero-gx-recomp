@@ -534,8 +534,9 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         cpu->gpr[3], cpu->gpr[4], cpu->ctr, cpu->lr, *c);
       if(*c%5000000==0) fprintf(stderr,"[watch] 19FA4-loop 19FC4=%u 19FCC=%u 19FDC=%u 19FE0=%u 19FE4=%u 19FEC=%u\n", _m1,_m2,_m3,_m4,_m5,_m6);
       return false; }
-    // fzEYi: 1A178 is the error-report chain. Split caller LR: 18D58 means
-    // r3==0x10 entry error; 18DA0/19230 mean result-bit/state errors.
+    // fzEYi: 1A178 reports per completion from lr=19230 (report-then-motor:
+    // 19218 files b12=-1, 1922C calls 1A178, 19230+ issues STOPMOTOR via
+    // 16920). Normal path, not a failure — the motor issue follows it.
     if(addr==0x8001A178u){
       static unsigned _n=0; _n++;
       if(_n<=8||_n%5000000==0){ uint32_t m60=0,m56=0,m52=0,d0=0,d4=0,d8=0;
