@@ -606,13 +606,22 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // fzEYzb5/fzEYzb4 probes removed: 18EDC/18E90/18FE0 never fire
     // (mid-chain natives in 18D1C frame).
-    // fzEYzb13: 177C0/177C8/177D0 (all dispatched) are the post-call
-    // continuations (post-D540/D944/1029C). First-fire shows how far
-    // the 1776C frame gets before leaving into native callees.
-    if(addr==0x800177C0u||addr==0x800177C8u||addr==0x800177D0u){
-      static unsigned _m[3]={0}; int _i=
-        addr==0x800177C0u?0:addr==0x800177C8u?1:2;
-      const char *_nm[3]={"177C0","177C8","177D0"};
+    // fzEYzb14: 177D0 dispatches, then the 177E4 deref chain
+    // ([r13-31480]+32 deref) + 177F0/177F8 compare run native; 177FC
+    // (fallthrough toward 1A3F4) vs 17814 (taken) decide. Dump the
+    // deref base + final r3 to see the selector value.
+    if(addr==0x800177D0u){
+      static unsigned _n=0; if(++_n<=4){ uint32_t b=0,v=0;
+        guest_read32(cpu->gpr[13]-31480u,&b);
+        if(b){ uint32_t p=0; guest_read32(b+32u,&p); if(p) guest_read32(p,&v); }
+        fprintf(stderr,"[dvdsm] 177D0 base-31480=0x%08X deref=%08X lr=0x%08X (#%u)\n",
+          b, v, cpu->lr, _n); }
+      return false; }
+    // fzEYzb13: 177C0/177C8 (post-call continuations). 177D0 has its
+    // own deref-dump probe above; excluded here to avoid double-fire.
+    if(addr==0x800177C0u||addr==0x800177C8u){
+      static unsigned _m[2]={0}; int _i=addr==0x800177C0u?0:1;
+      const char *_nm[2]={"177C0","177C8"};
       if(++_m[_i]<=3) fprintf(stderr,"[dvdsm] %s r3=0x%08X lr=0x%08X (#%u)\n",
         _nm[_i], cpu->gpr[3], cpu->lr, _m[_i]);
       return false; }
