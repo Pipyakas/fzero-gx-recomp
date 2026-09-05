@@ -517,11 +517,19 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     if(addr==0x80017958u||addr==0x800179BCu||addr==0x800187CCu||addr==0x80018820u){
       static unsigned _h1=0,_h2=0,_h3=0,_h4=0;
       unsigned *c=addr==0x80017958u?&_h1:addr==0x800179BCu?&_h2:addr==0x800187CCu?&_h3:&_h4; (*c)++;
-      if(*c<=3){ uint32_t a=0,b=0;
+      // fzEYzc2: at 18820 also dump [curblk+8] (m60 source on skip path).
+      if(*c<=3){ uint32_t a=0,b=0,t8=0xDEADu;
         guest_read32(cpu->gpr[13]-31464u,&a); guest_read32(cpu->gpr[13]-31460u,&b);
-        fprintf(stderr,"[watch] %s m64=%u m60=%u lr=0x%08X (#%u)\n",
+        if(addr==0x80018820u){ uint32_t cb=0; guest_read32(cpu->gpr[13]-31488u,&cb);
+          if(cb) guest_read32(cb+8u,&t8); }
+        fprintf(stderr,"[watch] %s m64=%u m60=%u lr=0x%08X%s (#%u)\n",
           addr==0x80017958u?"17958":addr==0x800179BCu?"179BC":addr==0x800187CCu?"187CC":"18820",
-          a, b, cpu->lr, *c); }
+          a, b, cpu->lr,
+          addr==0x80018820u?(t8==0xDEADu?" curblk=0":""):"",
+          *c);
+        if(addr==0x80018820u){ uint32_t cb=0; guest_read32(cpu->gpr[13]-31488u,&cb);
+          if(cb){ uint32_t v=0; guest_read32(cb+8u,&v);
+            fprintf(stderr,"[watch] 18820 curblk=0x%08X tag8=%u\n", cb, v); } } }
       return false; }
     // fzEM (corrected): 19FA4's scan loop is 19FC4(lwz)/19FCC(bc)/
     // 19FDC(addi)/19FE0-bdnz/19FE4/19FEC-return. (19F2C et al are 19F04's
