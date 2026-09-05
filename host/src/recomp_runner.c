@@ -606,6 +606,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // fzEYzb5/fzEYzb4 probes removed: 18EDC/18E90/18FE0 never fire
     // (mid-chain natives in 18D1C frame).
+    // fzEYzb15: 177A0/177A4 (both dispatched) bracket the 177AC workarea
+    // writer (native stores r0=0x80000000 to r13-31480!). The null base
+    // is filed by guest code itself — not a missing installer. Dump r0.
+    if(addr==0x800177A0u||addr==0x800177A4u){
+      static unsigned _n1=0,_n2=0; unsigned *c=addr==0x800177A0u?&_n1:&_n2; (*c)++;
+      if(*c<=3) fprintf(stderr,"[dvdsm] %s r0=0x%08X r3=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x800177A0u?"177A0":"177A4", cpu->gpr[0], cpu->gpr[3], cpu->lr, *c);
+      return false; }
     // fzEYzb14: 177D0 dispatches, then the 177E4 deref chain
     // ([r13-31480]+32 deref) + 177F0/177F8 compare run native; 177FC
     // (fallthrough toward 1A3F4) vs 17814 (taken) decide. Dump the
