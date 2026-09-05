@@ -606,6 +606,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // fzEYzb5/fzEYzb4 probes removed: 18EDC/18E90/18FE0 never fire
     // (mid-chain natives in 18D1C frame).
+    // fzEYzb9: 16C94 (dispatched entry) encloses the native 16D50
+    // flag-setter tail (flag-31592=1 + flag-31560=1). Fires => setter
+    // runs; dump the flag to confirm it lands.
+    if(addr==0x80016C94u){
+      static unsigned _n=0; if(++_n<=4){ uint32_t f=0xDEADu;
+        guest_read32(cpu->gpr[13]-31592u,&f);
+        fprintf(stderr,"[dvdsm] 16C94 flag-31592=%u r3=0x%08X lr=0x%08X (#%u)\n",
+          f, cpu->gpr[3], cpu->lr, _n); }
+      return false; }
     // fzEYzb6: 16AD4/16B5C/16BEC (all dispatched entries) file the
     // block+8 tags (0xE1/0xE2/0xE4-class). lr + r3 identify which command
     // family files tag=14 each issue.
