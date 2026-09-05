@@ -606,6 +606,16 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // fzEYzb5/fzEYzb4 probes removed: 18EDC/18E90/18FE0 never fire
     // (mid-chain natives in 18D1C frame).
+    // fzEYzb6: 16AD4/16B5C/16BEC (all dispatched entries) file the
+    // block+8 tags (0xE1/0xE2/0xE4-class). lr + r3 identify which command
+    // family files tag=14 each issue.
+    if(addr==0x80016AD4u||addr==0x80016B5Cu||addr==0x80016BECu){
+      static unsigned _a=0,_b=0,_c=0;
+      unsigned *q=addr==0x80016AD4u?&_a:addr==0x80016B5Cu?&_b:&_c; (*q)++;
+      if(*q<=3) fprintf(stderr,"[dvdsm] %s r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x80016AD4u?"16AD4":addr==0x80016B5Cu?"16B5C":"16BEC",
+        cpu->gpr[3], cpu->gpr[4], cpu->lr, *q);
+      return false; }
     // fzEYz: 19500 (dispatched entry) files block+40 (slot) at 19538.
     // If it never fires, no slot is ever registered and 18E04 always
     // skips the invoke — the completion can never call back up.
