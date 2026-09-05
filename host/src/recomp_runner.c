@@ -989,6 +989,16 @@ void recomp_run_slice(void){
             if(blk) guest_read32(blk+8u,&tag);
             guest_read32(0x80124018u+tag*4u,&row);
             fprintf(stderr,"[dvdsm] 189FC tag=%u row=0x%08X blk=0x%08X (#t=%u)\n", tag, row, blk, _t); } } }
+        // fzEYzb7: 15FC0/16024/16028 dispatch on the waiter path; 16018
+        // is native. Uncapped counters show whether the waiter runs and
+        // which side (flag==1 short-circuit at 16024 vs clear at 16028).
+        if(pc==0x80015FC0u||pc==0x80016024u||pc==0x80016028u){
+          static unsigned _w1=0,_w2=0,_w3=0;
+          unsigned *c=pc==0x80015FC0u?&_w1:pc==0x80016024u?&_w2:&_w3; (*c)++;
+          if(*c<=3||*c%5000000==0){ u32 fl=0; guest_read32(g_cpu.gpr[13]-31592u,&fl);
+            fprintf(stderr,"[dvdsm] %s flag-31592=%u DIstatus=0x%08X lr=0x%08X (#%u)\n",
+              pc==0x80015FC0u?"15FC0-entry":pc==0x80016024u?"16024-flagset":"16028-flagclear",
+              fl, s_di.status, g_cpu.lr, *c); } }
         if(pc==0x80016018u){ static int _n=0; if(_n<8){ _n++;
             u32 fl=0; guest_read32(g_cpu.gpr[13]-31592u, &fl);
             fprintf(stderr,"[dvdsm] 16018 flag-31592=%u DIstatus=0x%08X lr=0x%08X\n", fl, s_di.status, g_cpu.lr); } }
