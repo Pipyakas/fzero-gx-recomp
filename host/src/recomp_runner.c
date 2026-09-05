@@ -606,6 +606,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // fzEYzb5/fzEYzb4 probes removed: 18EDC/18E90/18FE0 never fire
     // (mid-chain natives in 18D1C frame).
+    // fzEYzb10: 1776C (dispatched entry) encloses the 1A3F4 slot-chain
+    // caller at 1780C. Fires => the registration chain runs at all.
+    if(addr==0x8001776Cu){
+      static unsigned _n=0; if(++_n<=4) fprintf(stderr,"[dvdsm] 1776C r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+        cpu->gpr[3], cpu->gpr[4], cpu->lr, _n);
+      return false; }
     // fzEYzb9: 16C94 (dispatched entry) encloses the native 16D50
     // flag-setter tail (flag-31592=1 + flag-31560=1). Fires => setter
     // runs; dump the flag to confirm it lands.
