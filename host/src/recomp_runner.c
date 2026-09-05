@@ -616,6 +616,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         addr==0x80016AD4u?"16AD4":addr==0x80016B5Cu?"16B5C":"16BEC",
         cpu->gpr[3], cpu->gpr[4], cpu->lr, *q);
       return false; }
+    // fzEYzb8: A360 (dispatched entry) selects the 030CE store side
+    // (A398 native vs A3A8 native). Entry lr + r3 identify the caller.
+    if(addr==0x8000A360u){
+      static unsigned _c=0; if(++_c<=4) fprintf(stderr,"[dvdsm] A360 r3=0x%08X lr=0x%08X (#%u)\n",
+        cpu->gpr[3], cpu->lr, _c);
+      return false; }
     // fzEYz: 19500 (dispatched entry) files block+40 (slot) at 19538.
     // If it never fires, no slot is ever registered and 18E04 always
     // skips the invoke — the completion can never call back up.
