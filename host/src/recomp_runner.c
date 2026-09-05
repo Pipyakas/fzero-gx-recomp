@@ -626,6 +626,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       const char *_nm[9]={"1A344","1A348","1A354","1A37C","1A3AC","1A3B0","1A3B8","1A3C0","1A3CC"};
       if(++_o[_i]<=3) fprintf(stderr,"[dvdsm] %s lr=0x%08X (#%u)\n", _nm[_i], cpu->lr, _o[_i]);
       return false; }
+    // fzEYzb4: 18E90/18FE0 (both dispatched) read the unwritten
+    // r13-32564 cell the 18E68 gate compares m60 against. Dump it: if it
+    // holds 14 the gate can never pass; if 0/unwritten, same result.
+    if(addr==0x80018E90u||addr==0x80018FE0u){
+      static unsigned _t1=0,_t2=0; unsigned *c=addr==0x80018E90u?&_t1:&_t2; (*c)++;
+      if(*c<=3){ uint32_t v=0; guest_read32(cpu->gpr[13]-32564u,&v);
+        fprintf(stderr,"[dvdsm] %s cell32564=%u (0x%08X) r4=m60=%u (#%u)\n",
+          addr==0x80018E90u?"18E90":"18FE0", v, v, cpu->gpr[4], *c); }
+      return false; }
     // fzEYz: 19500 (dispatched entry) files block+40 (slot) at 19538.
     // If it never fires, no slot is ever registered and 18E04 always
     // skips the invoke — the completion can never call back up.
