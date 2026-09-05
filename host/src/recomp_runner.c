@@ -626,6 +626,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       const char *_nm[9]={"1A344","1A348","1A354","1A37C","1A3AC","1A3B0","1A3B8","1A3C0","1A3CC"};
       if(++_o[_i]<=3) fprintf(stderr,"[dvdsm] %s lr=0x%08X (#%u)\n", _nm[_i], cpu->lr, _o[_i]);
       return false; }
+    // fzEYzb5: 18EDC (dispatched) is the r3-bit28 fallthrough block
+    // (m56=0 write + b12=10 + slot check). If it fires, the frame took
+    // the error-ish leg past 18ED8 — dump m56/slot to confirm.
+    if(addr==0x80018EDCu){
+      static unsigned _u=0; if(++_u<=4){ uint32_t m=0,s=0;
+        guest_read32(cpu->gpr[13]-31456u,&m); guest_read32(cpu->gpr[30]+40u,&s);
+        fprintf(stderr,"[dvdsm] 18EDC m56=%u slot40=0x%08X r3=0x%08X (#%u)\n",
+          m, s, cpu->gpr[3], _u); }
+      return false; }
     // fzEYzb4: 18E90/18FE0 (both dispatched) read the unwritten
     // r13-32564 cell the 18E68 gate compares m60 against. Dump it: if it
     // holds 14 the gate can never pass; if 0/unwritten, same result.
