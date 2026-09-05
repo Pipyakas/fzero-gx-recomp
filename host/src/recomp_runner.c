@@ -201,7 +201,10 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           // fzEE: block fully untouched (no +12/+28/+32 writes; the 19270
           // success gate needs [blk+32]==[blk+20] and any HLE write breaks it)
             { static int _m=0; if(_m<2){ _m++; fprintf(stderr,"[di] INQUIRY blk=0x%08X cb=0x80018D1C (block untouched, fzEE)\n", block); } }
-          dol_hle_queue_guest_callback(cb, 0, block); }
+          // fzEYzb2: queue result = transferred length (32), matching
+          // DVDCBCallback(result=bytes, block). r3=0 read as zero-length
+          // failure at 18D80/18F38 bit branches + 19270 gate.
+          dol_hle_queue_guest_callback(cb, cmd->dma_length ? cmd->dma_length : 32u, block); }
         return DOL_DI_COMMAND_COMPLETE;
     }
     // Motor/stop/reset class (dolsdk2001 DVDLowStopMotor 0xE3, Reset etc.):
