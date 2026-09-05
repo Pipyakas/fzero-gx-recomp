@@ -606,6 +606,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // fzEYzb5/fzEYzb4 probes removed: 18EDC/18E90/18FE0 never fire
     // (mid-chain natives in 18D1C frame).
+    // fzEYzb12: 177FC (dispatched) is the 177F8-fallthrough side toward
+    // 1780C/1A3F4; 17814 is the branch-taken side. r3 = [r13-31480]+32
+    // deref selects. Dump r3 + the deref chain base.
+    if(addr==0x800177FCu){
+      static unsigned _n=0; if(++_n<=4){ uint32_t b=0; guest_read32(cpu->gpr[13]-31480u,&b);
+        fprintf(stderr,"[dvdsm] 177FC r3=0x%08X base-31480=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], b, cpu->lr, _n); }
+      return false; }
     // fzEYzb11: 17814/1780C (both dispatched) are the 177F8-branch
     // sides into the 1A3F4 caller. 177F0/177F8 native; r3 selects.
     if(addr==0x80017814u||addr==0x8001780Cu){
