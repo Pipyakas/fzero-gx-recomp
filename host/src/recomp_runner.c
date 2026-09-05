@@ -606,6 +606,16 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // fzEYzb5/fzEYzb4 probes removed: 18EDC/18E90/18FE0 never fire
     // (mid-chain natives in 18D1C frame).
+    // fzEYzb13: 177C0/177C8/177D0 (all dispatched) are the post-call
+    // continuations (post-D540/D944/1029C). First-fire shows how far
+    // the 1776C frame gets before leaving into native callees.
+    if(addr==0x800177C0u||addr==0x800177C8u||addr==0x800177D0u){
+      static unsigned _m[3]={0}; int _i=
+        addr==0x800177C0u?0:addr==0x800177C8u?1:2;
+      const char *_nm[3]={"177C0","177C8","177D0"};
+      if(++_m[_i]<=3) fprintf(stderr,"[dvdsm] %s r3=0x%08X lr=0x%08X (#%u)\n",
+        _nm[_i], cpu->gpr[3], cpu->lr, _m[_i]);
+      return false; }
     // fzEYzb12: 177FC (dispatched) is the 177F8-fallthrough side toward
     // 1780C/1A3F4; 17814 is the branch-taken side. r3 = [r13-31480]+32
     // deref selects. Dump r3 + the deref chain base.
