@@ -606,6 +606,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // fzEYzb5/fzEYzb4 probes removed: 18EDC/18E90/18FE0 never fire
     // (mid-chain natives in 18D1C frame).
+    // fzEYzb16: 16DC0/19E64 (both dispatched entries) are the native
+    // calls at 17798/1779C preceding the workarea writer. If 16DC0
+    // fires but 19E64 never does, the frame dies inside 16DC0.
+    if(addr==0x80016DC0u||addr==0x80019E64u){
+      static unsigned _n1=0,_n2=0; unsigned *c=addr==0x80016DC0u?&_n1:&_n2; (*c)++;
+      if(*c<=4) fprintf(stderr,"[dvdsm] %s r3=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x80016DC0u?"16DC0":"19E64", cpu->gpr[3], cpu->lr, *c);
+      return false; }
     // fzEYzb15: 177A0/177A4 (both dispatched) bracket the 177AC workarea
     // writer (native stores r0=0x80000000 to r13-31480!). The null base
     // is filed by guest code itself — not a missing installer. Dump r0.
