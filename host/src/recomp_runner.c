@@ -384,7 +384,7 @@ static uint32_t chassis_ctx_ptr(void){
 // sources then stay pending until the guest acks them, matching
 // level-triggered hardware.
 #define CHASSIS_FRAME_WORK_UNITS 200000ull
-static uint32_t s_os_dispatch_interrupt = 0; // 0 = parked; resolve F-Zero addr later
+static uint32_t s_os_dispatch_interrupt = 0x8000D9CCu; // F-Zero __OSDispatchInterrupt (OSInterruptMask.s)
 static void chassis_deliver_external(void){
     // Parked until the F-Zero dispatcher address is known. Retrace status +
     // timebase are still driven from the slice tail; nothing redirects pc here.
@@ -1339,6 +1339,11 @@ void recomp_run_slice(void){
         // Retrace => +675000 timebase ticks + VI status bit asserted.
         // Interrupt delivery stays parked (s_os_dispatch_interrupt==0) so
         // VIWaitForRetrace-style loops observe level-triggered pending.
+        { static unsigned long long _rt=0; if(++_rt==1||_rt%2000000==0){
+          uint32_t d4=0; guest_read32(0x800000D4u,&d4);
+          fprintf(stderr,"[irq] retrace#%llu DIpend=%d ext=%d D4=0x%08X disp=0x%08X\n",
+            _rt, dol_di_interrupt_pending(&s_di),
+            dol_interrupts_external_pending(&s_interrupts), d4, s_os_dispatch_interrupt); } }
         // fzEA: +1 timebase tick per slice-loop iteration (deterministic:
         // the dispatch count is deterministic). Back-to-back DI completions
         // (INQUIRY then STOPMOTOR) otherwise share one frozen tb, so the
