@@ -559,39 +559,8 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _y=0; if(++_y<=4) fprintf(stderr,"[dvdsm] 19760 r3=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->lr, _y);
       return false; }
-    // fzEXh: 18F40 (dispatched) zeroes m36 then reads m56; 18F50 branch
-    // (native) routes to 18FB0 (m56==0) vs 18F54 (m56!=0). m56 dump here
-    // tells which side every completion takes at the top of F38 route.
-    if(addr==0x80018F40u){
-      static unsigned _k=0; if(++_k<=4||_k%5000000==0){ uint32_t m=0;
-        guest_read32(cpu->gpr[13]-31456u,&m);
-        fprintf(stderr,"[dvdsm] 18F40 m56=%u r3=%u (#%u)\n", m, cpu->gpr[3], _k); }
-      return false; }
-    // fzEXg: 18F54/18F7C (both dispatched) bracket the F38 route's slot
-    // invoke (18F88 blrl). If 18F54 fires but 18F7C never does, the frame
-    // never returns from the block's slot callback (blrl runs away).
-    if(addr==0x80018F54u||addr==0x80018F7Cu){
-      static unsigned _h1=0,_h2=0; unsigned *c=addr==0x80018F54u?&_h1:&_h2; (*c)++;
-      if(*c<=3||*c%5000000==0){ uint32_t m=0; guest_read32(cpu->gpr[13]-31452u,&m);
-        fprintf(stderr,"[dvdsm] %s m52=0x%08X r3=%d (#%u)\n",
-          addr==0x80018F54u?"18F54-preslot":"18F7C-postslot", m, (int32_t)cpu->gpr[3], *c); }
-      return false; }
-    // fzEXf: 18F8C (dispatched) reads the m52 callback slot; 18F94
-    // branches to 18FA8-drain vs 18F98. m52 dump tells whether a slot cb
-    // is even registered for this completion.
-    if(addr==0x80018F8Cu){
-      static unsigned _s=0; if(++_s<=4||_s%5000000==0){ uint32_t m=0;
-        guest_read32(cpu->gpr[13]-31452u,&m);
-        fprintf(stderr,"[dvdsm] 18F8C m52=0x%08X (#%u)\n", m, _s); }
-      return false; }
-    // fzEXe: 18F98/18FAC (both dispatched) bracket the 18FA8 drain call.
-    // If 18F98 fires but 18FAC never does, the frame never returns from
-    // the 187CC drain on the F38 route (drain runs away, as in fzEX).
-    if(addr==0x80018F98u||addr==0x80018FACu){
-      static unsigned _n1=0,_n2=0; unsigned *c=addr==0x80018F98u?&_n1:&_n2; (*c)++;
-      if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
-        addr==0x80018F98u?"18F98-predrain":"18FAC-postdrain", cpu->gpr[3], *c);
-      return false; }
+    // fzEXh/fzEXg/fzEXf/fzEXe probes removed: 18F40/18F54/18F7C/18F8C/
+    // 18F98/18FAC never fire (mid-chain natives inside the 18D1C frame).
     // fzEYzd: 1A3F4/1A418/1A43C (all dispatched) lead to the second
     // 19500 call at 1A450. Entry lr names which upper layer registers.
     if(addr==0x8001A3F4u||addr==0x8001A418u||addr==0x8001A43Cu){
@@ -626,24 +595,8 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       const char *_nm[9]={"1A344","1A348","1A354","1A37C","1A3AC","1A3B0","1A3B8","1A3C0","1A3CC"};
       if(++_o[_i]<=3) fprintf(stderr,"[dvdsm] %s lr=0x%08X (#%u)\n", _nm[_i], cpu->lr, _o[_i]);
       return false; }
-    // fzEYzb5: 18EDC (dispatched) is the r3-bit28 fallthrough block
-    // (m56=0 write + b12=10 + slot check). If it fires, the frame took
-    // the error-ish leg past 18ED8 — dump m56/slot to confirm.
-    if(addr==0x80018EDCu){
-      static unsigned _u=0; if(++_u<=4){ uint32_t m=0,s=0;
-        guest_read32(cpu->gpr[13]-31456u,&m); guest_read32(cpu->gpr[30]+40u,&s);
-        fprintf(stderr,"[dvdsm] 18EDC m56=%u slot40=0x%08X r3=0x%08X (#%u)\n",
-          m, s, cpu->gpr[3], _u); }
-      return false; }
-    // fzEYzb4: 18E90/18FE0 (both dispatched) read the unwritten
-    // r13-32564 cell the 18E68 gate compares m60 against. Dump it: if it
-    // holds 14 the gate can never pass; if 0/unwritten, same result.
-    if(addr==0x80018E90u||addr==0x80018FE0u){
-      static unsigned _t1=0,_t2=0; unsigned *c=addr==0x80018E90u?&_t1:&_t2; (*c)++;
-      if(*c<=3){ uint32_t v=0; guest_read32(cpu->gpr[13]-32564u,&v);
-        fprintf(stderr,"[dvdsm] %s cell32564=%u (0x%08X) r4=m60=%u (#%u)\n",
-          addr==0x80018E90u?"18E90":"18FE0", v, v, cpu->gpr[4], *c); }
-      return false; }
+    // fzEYzb5/fzEYzb4 probes removed: 18EDC/18E90/18FE0 never fire
+    // (mid-chain natives in 18D1C frame).
     // fzEYz: 19500 (dispatched entry) files block+40 (slot) at 19538.
     // If it never fires, no slot is ever registered and 18E04 always
     // skips the invoke — the completion can never call back up.
@@ -651,98 +604,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _n=0; if(++_n<=4) fprintf(stderr,"[dvdsm] 19500 slot-reg r3=0x%08X r5=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->gpr[5], cpu->lr, _n);
       return false; }
-    // fzEYy: 18DD8/18E08 (both dispatched) bracket the 18DFC slot-load.
-    // m48=0 and block+40=0 observed, so 18E04 skips the blrl to 18E18 —
-    // confirm 18E08 never fires (slot always null).
-    if(addr==0x80018DD8u||addr==0x80018E08u){
-      static unsigned _k1=0,_k2=0; unsigned *c=addr==0x80018DD8u?&_k1:&_k2; (*c)++;
-      if(*c<=3||*c%5000000==0){ uint32_t s=0; guest_read32(cpu->gpr[30]+40u,&s);
-        fprintf(stderr,"[dvdsm] %s slot40=0x%08X r30=0x%08X (#%u)\n",
-          addr==0x80018DD8u?"18DD8":"18E08-invoke", s, cpu->gpr[30], *c); }
-      return false; }
-    // fzEYx: 18E34/18E44/18E64 all dispatch on the 18E18 success path
-    // into 18E68. First-fire + counters show whether the frame reaches
-    // the m60 gate at all (vs dying in the 187CC drain at 18E34).
-    if(addr==0x80018E34u||addr==0x80018E44u||addr==0x80018E64u){
-      static unsigned _j[3]={0}; int _i=
-        addr==0x80018E34u?0:addr==0x80018E44u?1:2;
-      const char *_nm[3]={"18E34-predrain","18E44","18E64"};
-      if(++_j[_i]<=2||_j[_i]%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
-        _nm[_i], cpu->gpr[3], _j[_i]);
-      return false; }
-    // fzEYzb3: 18F14/18F20/18F30 dispatch on the 18EDC route; the
-    // native 18F1C branch selects 18F20 (m52!=0, slot path) vs 18F30
-    // (m52==0, skip). m52 is always 0 here => expect 18F30 only.
-    if(addr==0x80018F04u||addr==0x80018F14u||addr==0x80018F20u||addr==0x80018F30u||addr==0x80018F34u){
-      static unsigned _h[5]={0}; int _i=
-        addr==0x80018F04u?0:addr==0x80018F14u?1:addr==0x80018F20u?2:addr==0x80018F30u?3:4;
-      const char *_nm[5]={"18F04","18F14","18F20","18F30","18F34"};
-      if(++_h[_i]<=2||_h[_i]%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
-        _nm[_i], cpu->gpr[3], _h[_i]);
-      return false; }
-    // fzEYv: 19240/19270/19330 are dispatched but never fire — the frame
-    // never returns from the 18FA8 drain on the F38 route, same as fzEX.
-    // m60-dump confirms the gate state each completion would test.
-    if(addr==0x80019240u||addr==0x80019270u||addr==0x80019330u){
-      static unsigned _g1=0,_g2=0,_g3=0;
-      unsigned *c=addr==0x80019240u?&_g1:addr==0x80019270u?&_g2:&_g3; (*c)++;
-      if(*c<=3||*c%5000000==0){ uint32_t m=0; guest_read32(cpu->gpr[13]-31460u,&m);
-        fprintf(stderr,"[dvdsm] %s m60=%u (#%u)\n",
-          addr==0x80019240u?"19240":addr==0x80019270u?"19270":"19330", m, *c); }
-      return false; }
-    // fzEXd: 18F38 computes r3&1 (dispatched) — dump r3/bit per
-    // completion. r3=0 => EQ => F3C falls to 18F40 route; r3 odd => to
-    // 1920C. F38-fallthrough labels never fire, so expect r3 odd here.
-    if(addr==0x80018F38u){
-      static unsigned _e=0; if(++_e<=4||_e%5000000==0)
-        fprintf(stderr,"[dvdsm] 18F38 r3=%u bit=%u (#%u)\n",
-          cpu->gpr[3], cpu->gpr[3]&1u, _e);
-      return false; }
-    // fzEXc: F38-fallthrough route (all dispatched): 18FB0/18FD8/18FF8/
-    // 19000/19048/19050/190AC/19118. Dumps per label show how far each
-    // completion gets down the post-18F38 chain.
-    if(addr==0x80018FB0u||addr==0x80018FD8u||addr==0x80018FF8u||addr==0x80019000u||addr==0x80019048u||addr==0x80019050u||addr==0x800190ACu||addr==0x80019118u){
-      static unsigned _v[8]={0}; int _i=
-        addr==0x80018FB0u?0:addr==0x80018FD8u?1:addr==0x80018FF8u?2:addr==0x80019000u?3:
-        addr==0x80019048u?4:addr==0x80019050u?5:addr==0x800190ACu?6:7;
-      const char *_nm[8]={"18FB0","18FD8","18FF8","19000","19048","19050","190AC","19118"};
-      if(++_v[_i]<=2||_v[_i]%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u r4=0x%08X (#%u)\n",
-        _nm[_i], cpu->gpr[3], cpu->gpr[4], _v[_i]);
-      return false; }
-    // fzEXb: 18DB0/18DC4/18DCC all dispatch (compares native between).
-    // 18DB0 zeroes m36; 18DC4 sets m32=1 (m60!=15 path); 18DCC reads m56.
-    // m32/m36 dumps distinguish first completion from later ones.
-    if(addr==0x80018DB0u||addr==0x80018DC4u||addr==0x80018DCCu){
-      static unsigned _w1=0,_w2=0,_w3=0;
-      unsigned *c=addr==0x80018DB0u?&_w1:addr==0x80018DC4u?&_w2:&_w3; (*c)++;
-      if(*c<=3||*c%5000000==0){ uint32_t m32=0,m36=0,m56=0;
-        guest_read32(cpu->gpr[13]-31432u,&m32); guest_read32(cpu->gpr[13]-31436u,&m36);
-        guest_read32(cpu->gpr[13]-31456u,&m56);
-        fprintf(stderr,"[dvdsm] %s m32=%u m36=%u m56=%u (#%u)\n",
-          addr==0x80018DB0u?"18DB0":addr==0x80018DC4u?"18DC4":"18DCC",
-          m32, m36, m56, *c); }
-      return false; }
-    // fzEZb: 18D68/18D74/18D88 are ALL dispatched (18D6C/18D78 compares
-    // native). m60==14 here: 18D68 (m60==3?) falls to 18D74 (m60==15?)
-    // falls to 18D80. Uncapped counters + first dumps per label.
-    if(addr==0x80018D68u||addr==0x80018D74u||addr==0x80018D88u){
-      static unsigned _x1=0,_x2=0,_x3=0;
-      unsigned *c=addr==0x80018D68u?&_x1:addr==0x80018D74u?&_x2:&_x3; (*c)++;
-      if(*c<=3||*c%5000000==0){ uint32_t m=0; guest_read32(cpu->gpr[13]-31460u,&m);
-        fprintf(stderr,"[dvdsm] %s m60=%u r3=%u (#%u)\n",
-          addr==0x80018D68u?"18D68":addr==0x80018D74u?"18D74":"18D88-STOP",
-          m, cpu->gpr[3], *c); }
-      return false; }
-    // fzEZ: 18D80 (dispatched) computes (r3>>1)&1 and 18D84 branches to
-    // 18DB0 (main body) vs 18D88 (STOPMOTOR path). r3=0 here => bit clear
-    // => 18DB0 always; the STOPMOTOR path needs r3 odd (r3=1 from the
-    // 19760 motor wrapper). Queueing completions with r3=0 pins the body
-    // on 18DB0; the motor wrapper's r3=1 would route to 18D88.
-    if(addr==0x80018D80u){
-      static unsigned _z=0; if(++_z<=4||_z%5000000==0)
-        fprintf(stderr,"[dvdsm] 18D80 r3=%u bit=%u (#%u)\n",
-          cpu->gpr[3], (cpu->gpr[3]>>1)&1u, _z);
-      return false; }
+    // fzEYy probe removed: 18DD8/18E08 never fire (mid-chain natives).
+    // fzEYx/fzEYzb3/fzEYv probes removed: 18E34 et al / 18F04 et al /
+    // 19240 et al never fire (mid-chain natives in 18D1C frame).
+    // fzEXd probe removed: 18F38 never fires (mid-chain native).
+    // fzEXc/fzEXb/fzEZb/fzEZ probes removed: 18FB0 et al / 18DB0 et al /
+    // 18D68 et al / 18D80 never fire (mid-chain natives in 18D1C frame).
     // fzEU: 18D40 (dispatched) is the r3==0x10 error path; 18D58/18D5C
     // (native calls, never dispatch) route through 17958; 18D64/18D68
     // (dispatched) continue the main body. 18D3C-branch direction is read
