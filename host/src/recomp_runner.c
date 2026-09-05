@@ -652,9 +652,9 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(++_j[_i]<=2||_j[_i]%5000000==0) fprintf(stderr,"[dvdsm] %s r3=%u (#%u)\n",
         _nm[_i], cpu->gpr[3], _j[_i]);
       return false; }
-    // fzEYw: 18F04/18F14/18F20/18F30/18F34 all dispatch on the 18EDC
-    // route into 18F38. First-fire + counters show how far the frame
-    // gets before the frame-loop resumes it elsewhere.
+    // fzEYzb3: 18F14/18F20/18F30 dispatch on the 18EDC route; the
+    // native 18F1C branch selects 18F20 (m52!=0, slot path) vs 18F30
+    // (m52==0, skip). m52 is always 0 here => expect 18F30 only.
     if(addr==0x80018F04u||addr==0x80018F14u||addr==0x80018F20u||addr==0x80018F30u||addr==0x80018F34u){
       static unsigned _h[5]={0}; int _i=
         addr==0x80018F04u?0:addr==0x80018F14u?1:addr==0x80018F20u?2:addr==0x80018F30u?3:4;
