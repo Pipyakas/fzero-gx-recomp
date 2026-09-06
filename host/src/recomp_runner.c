@@ -851,15 +851,18 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // Read-only probe: log 16A38 (DI inquiry wrapper) entry regs to learn
     // the command-block pointer + callback. Touches nothing (returns false).
+    // fzEYzb20: ALSO dump block+8 tag filed by the 16Axx path (16AFC oris
+    // r0,r3,0xE100 -> [r6+8] in 16AD4-family; tag selects 189FC row).
     if(addr==0x80016A38u){
         static int _n=0;
         // fzEF: log EVERY issue (uncapped counter + c0 command word from the
         // DI reg 0xCC006008): M2 progress = c0 ever becomes 0xA8 (FST read)
         // instead of 0x12 (INQUIRY)/0xE3 (STOPMOTOR) retries.
         _n++;
-        if(_n<=10||_n%200==0){
-          fprintf(stderr,"[di] 16A38 #%d r3=0x%08X r4=0x%08X lr=0x%08X\n",
-            _n, cpu->gpr[3], cpu->gpr[4], cpu->lr); }
+        if(_n<=10||_n%200==0){ uint32_t tag=0xDEADu; uint32_t blk=cpu->gpr[3];
+          if(blk) guest_read32(blk+8u,&tag);
+          fprintf(stderr,"[di] 16A38 #%d r3=0x%08X r4=0x%08X tag8=%u lr=0x%08X\n",
+            _n, cpu->gpr[3], cpu->gpr[4], tag, cpu->lr); }
         return false;
     }
     // NOTE 800102AC is NOT DVDGetFSTLocation: it reads low-mem 0x800000E4
