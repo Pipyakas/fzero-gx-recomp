@@ -675,6 +675,18 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // block that re-issues INQUIRY via 16A38 — the 16AD4 tag-filing
     // calls (18BA8/18BD4/18C08) sit on sibling legs the frame never
     // takes, and 18B04 et al are native labels (no downcount).
+    // fzEYzb17: 16394/163DC (both dispatched) bracket the guest
+    // DVDLowRead builder (lis -22528 = 0xA8000000 at 163F0, DICR=3 at
+    // 16418). Fires => guest issues a real READ; dump regs + DMA regs.
+    if(addr==0x80016394u||addr==0x800163DCu){
+      static unsigned _e1=0,_e2=0; unsigned *c=addr==0x80016394u?&_e1:&_e2; (*c)++;
+      if(*c<=4){ uint32_t c0=0xDEADu,c1=0xDEADu,da=0xDEADu,dl=0xDEADu;
+        guest_read32(0xCC006008u,&c0); guest_read32(0xCC00600Cu,&c1);
+        guest_read32(0xCC006014u,&da); guest_read32(0xCC006018u,&dl);
+        fprintf(stderr,"[dvdsm] %s r3=0x%08X r30=0x%08X c0=0x%08X c1=0x%08X dma=0x%08X len=%u lr=0x%08X (#%u)\n",
+          addr==0x80016394u?"16394-entry":"163DC-build",
+          cpu->gpr[3], cpu->gpr[30], c0, c1, da, dl, cpu->lr, *c); }
+      return false; }
     // fzEYzb6: 16AD4/16B5C/16BEC (all dispatched entries) file the
     // block+8 tags (0xE1/0xE2/0xE4-class). lr + r3 identify which command
     // family files tag=14 each issue.
