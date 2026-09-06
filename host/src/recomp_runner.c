@@ -684,6 +684,21 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // block that re-issues INQUIRY via 16A38 — the 16AD4 tag-filing
     // calls (18BA8/18BD4/18C08) sit on sibling legs the frame never
     // takes, and 18B04 et al are native labels (no downcount).
+    // fzEYzb19: READ ancestors — 162A0 (resume helper) + 162C8 (its
+    // take-command leg); 16524 (read wrapper) + 16574/16650/166FC (3
+    // issue legs); 161C4 (15FC0 re-issue leg). Dump queue index
+    // (r13-31524), drive state (r13-31556), waiter flag (r13-31592).
+    if(addr==0x800162A0u||addr==0x800162C8u||addr==0x80016524u||addr==0x80016574u||addr==0x80016650u||addr==0x800166FCu||addr==0x800161C4u){
+      static unsigned _r[7]={0}; int _i=
+        addr==0x800162A0u?0:addr==0x800162C8u?1:addr==0x80016524u?2:addr==0x80016574u?3:
+        addr==0x80016650u?4:addr==0x800166FCu?5:6;
+      const char *_nm[7]={"162A0-resume","162C8-take","16524-wrap","16574-leg1","16650-leg2","166FC-leg3","161C4-reissue"};
+      if(++_r[_i]<=4){ uint32_t qi=0xDEADu,ds=0xDEADu,wf=0xDEADu;
+        guest_read32(cpu->gpr[13]-31524u,&qi); guest_read32(cpu->gpr[13]-31556u,&ds);
+        guest_read32(cpu->gpr[13]-31592u,&wf);
+        fprintf(stderr,"[dvdsm] %s r3=0x%08X r4=0x%08X qidx=%u drv=%u wait=%u lr=0x%08X (#%u)\n",
+          _nm[_i], cpu->gpr[3], cpu->gpr[4], qi, ds, wf, cpu->lr, _r[_i]); }
+      return false; }
     // fzEYzb17: 16394/163DC (both dispatched) bracket the guest
     // DVDLowRead builder (lis -22528 = 0xA8000000 at 163F0, DICR=3 at
     // 16418). Fires => guest issues a real READ; dump regs + DMA regs.
