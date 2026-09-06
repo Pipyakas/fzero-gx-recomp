@@ -711,6 +711,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           addr==0x80016394u?"16394-entry":"163DC-build",
           cpu->gpr[3], cpu->gpr[30], c0, c1, da, dl, cpu->lr, *c); }
       return false; }
+    // fzEYzb21: tag 2 row (18B08, dispatched) calls the 16524 wrapper
+    // which contains the READ builder — the only dispatch row reaching
+    // a READ. Tag 14 row (18CC8) re-issues INQUIRY. Dump on fire.
+    if(addr==0x80018B08u){
+      static unsigned _n=0; if(++_n<=4||_n%5000000==0){ uint32_t blk=cpu->gpr[7];
+        uint32_t tag=0xDEADu; if(blk) guest_read32(blk+8u,&tag);
+        fprintf(stderr,"[dvdsm] 18B08-tag2 blk=0x%08X tag=%u lr=0x%08X (#%u)\n",
+          blk, tag, cpu->lr, _n); }
+      return false; }
     // fzEYzb6: 16AD4/16B5C/16BEC (all dispatched entries) file the
     // block+8 tags (0xE1/0xE2/0xE4-class). lr + r3 identify which command
     // family files tag=14 each issue.
