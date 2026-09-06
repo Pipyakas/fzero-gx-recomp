@@ -711,6 +711,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           addr==0x80016394u?"16394-entry":"163DC-build",
           cpu->gpr[3], cpu->gpr[30], c0, c1, da, dl, cpu->lr, *c); }
       return false; }
+    // fzEYzb22: 18BDC (dispatched) writes m60 directly (stw r0,-31468
+    // with r0=1) on the path into the 18C08 tag-filer. m60 source dump
+    // shows whether this leg ever advances the drive state.
+    if(addr==0x80018BDCu){
+      static unsigned _n=0; if(++_n<=4){ uint32_t m=0;
+        guest_read32(cpu->gpr[13]-31460u,&m);
+        fprintf(stderr,"[dvdsm] 18BDC m60=%u r0=%u lr=0x%08X (#%u)\n",
+          m, cpu->gpr[0], cpu->lr, _n); }
+      return false; }
     // fzEYzb21: tag 2 row (18B08, dispatched) calls the 16524 wrapper
     // which contains the READ builder — the only dispatch row reaching
     // a READ. Tag 14 row (18CC8) re-issues INQUIRY. Dump on fire.
