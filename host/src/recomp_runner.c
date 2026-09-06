@@ -641,6 +641,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(++_m[_i]<=3) fprintf(stderr,"[dvdsm] %s r3=0x%08X lr=0x%08X (#%u)\n",
         _nm[_i], cpu->gpr[3], cpu->lr, _m[_i]);
       return false; }
+    // fzEYzb18: 17788/17824 (both dispatched) are the 17784-gate
+    // sides: 17788 fallthrough (toward 177F0 branch) vs 17824 taken
+    // (away). r0 = [r13-31424] selects; 1776C fires so entry runs.
+    if(addr==0x80017788u||addr==0x80017824u){
+      static unsigned _g1=0,_g2=0; unsigned *c=addr==0x80017788u?&_g1:&_g2; (*c)++;
+      if(*c<=4){ uint32_t v=0; guest_read32(cpu->gpr[13]-31424u,&v);
+        fprintf(stderr,"[dvdsm] %s flag-31424=%u lr=0x%08X (#%u)\n",
+          addr==0x80017788u?"17788-fall":"17824-taken", v, cpu->lr, *c); }
+      return false; }
     // fzEYzb12: 177FC (dispatched) is the 177F8-fallthrough side toward
     // 1780C/1A3F4; 17814 is the branch-taken side. r3 = [r13-31480]+32
     // deref selects. Dump r3 + the deref chain base.
