@@ -671,6 +671,10 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[dvdsm] 16C94 flag-31592=%u r3=0x%08X lr=0x%08X (#%u)\n",
           f, cpu->gpr[3], cpu->lr, _n); }
       return false; }
+    // fzEYzb12 (answered): 18ADC runs native straight into the 18AE0
+    // block that re-issues INQUIRY via 16A38 — the 16AD4 tag-filing
+    // calls (18BA8/18BD4/18C08) sit on sibling legs the frame never
+    // takes, and 18B04 et al are native labels (no downcount).
     // fzEYzb6: 16AD4/16B5C/16BEC (all dispatched entries) file the
     // block+8 tags (0xE1/0xE2/0xE4-class). lr + r3 identify which command
     // family files tag=14 each issue.
