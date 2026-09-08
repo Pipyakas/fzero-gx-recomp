@@ -3,5 +3,6 @@
 #include <stddef.h>
 void GXBegin(void) {}
 void GXInit(void) {}
+void gx_vulkan_set_clear(float r, float g, float b) {(void)r;(void)g;(void)b;}
 void GXSetLineWidth(unsigned char w, unsigned char fmt) {(void)w;(void)fmt;}
 void GXSetPointSize(unsigned char s, unsigned char fmt) {(void)s;(void)fmt;}

@@ -92,7 +92,15 @@ target_compile_definitions(recomp_core PRIVATE _CRT_SECURE_NO_WARNINGS)
 # _fseeki64/__int64 instead. Force-include the compat header for that TU
 # only (a global -Dfseeko= would break <stdio.h>'s own declaration).
 target_include_directories(recomp_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/compat")
-if(WIN32)
+if(MSVC)
+    # cpu.c + GXRuntime use GCC/Clang spellings (__attribute__, __builtin_bswap,
+    # <stdatomic.h>). msvc_compat.h nop-defines them; the shadow stdatomic.h in
+    # the same dir covers the include. MSVC-only: never on the clang path.
+    target_compile_options(recomp_core PRIVATE "/FI${CMAKE_CURRENT_SOURCE_DIR}/src/compat/msvc_compat.h")
+endif()
+if(WIN32 AND NOT MSVC)
+    # clang path only: MSVC gets fseeko/off_t from msvc_compat.h (/FI above)
+    # instead; -include is not a valid cl.exe flag.
     set_source_files_properties(
         "${GXRUNTIME_DIR}/src/dvd.c"
         PROPERTIES COMPILE_FLAGS "-include \"${CMAKE_CURRENT_SOURCE_DIR}/src/compat/dvd_port.h\"")
