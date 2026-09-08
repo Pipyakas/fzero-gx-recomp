@@ -1035,6 +1035,39 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[dvdsm] 19CF0-tag14row DICMD1=0x%08X r30=0x%08X lr=0x%08X (#%u)\n",
           c4, cpu->gpr[30], cpu->lr, _n); }
       return false; }
+    // fzEYzb56 (answered live — census): ONLY 1AF64-gamewait fires
+    // (3x, lr=70A2C, r3=0); 1A500/1A540/1A560/1A60C/1AB20/19B78/19500
+    // NEVER fire. The dead lattice stays dead; the live set is exactly
+    // {INQUIRY limb, game-wait limb}.
+    // fzEYzb57: 70A2C-decoded — the game thread runs 1AF64-wait FIRST
+    // (70A28 bl 1AF64), then 70A2C reads [r13-30412] (a POINTER), loads
+    // [ptr+0] bit0: set => 70A40 (continue to 798D0 worker = PROGRESS);
+    // clear => 70A3C bl 1AF64 (wait AGAIN). So the game thread is a
+    // TWO-STAGE wait: [r13-31388] (1AF64) then [[r13-30412]+0].bit0
+    // (70A30). NEITHER ever flips: -31388 pinned at 0 (waker dead),
+    // -30412 target unknown. Dump [r13-30412] + [[it]] at 1AF64 entry:
+    // is the second gate even armed (non-null pointer)?
+    // fzEYzb57 (answered live — gate2ptr=0x8019E150, [ptr]=0, waitword=0
+    // on all 4 hits): the second gate IS armed (valid pointer) but its
+    // target word is 0 (bit0 clear = wait). BOTH gates pinned at zero.
+    // The 706xx filer (7066C/7067C/7068C/7069C stw r0,-30412, selected by
+    // r3==1/0 + r31==0 cascade from a 1C01C query at 70634) files the
+    // gate2 POINTER (0x8019Exxx = DVD workarea?); the [ptr] WORD it
+    // points at is filed by NOBODY yet (a later boot phase). And the
+    // first gate's waker (1A618) is in the dead 1A5xx chain. So the game
+    // thread waits on TWO words that only LATER boot phases file — and
+    // those phases never run because... the DVD thread spins INQUIRY
+    // instead of advancing to them. CIRCULAR BOOT DEPENDENCY, fully
+    // mapped. NEXT: what SHOULD break it — the inquiry SUCCESS path
+    // that files the first of these words. Trace [0x8019E150] writers.
+    if(addr==0x8001AF64u){
+      static unsigned _n=0; if(++_n<=4){ uint32_t p=0xDEADu,v=0xDEADu,w=0xDEADu;
+        guest_read32(cpu->gpr[13]-30412u,&p);
+        if(p>=GC_RAM_BASE) guest_read32(p,&v);
+        guest_read32(cpu->gpr[13]-31388u,&w);
+        fprintf(stderr,"[dvdsm] 1AF64-gamewait r3=0x%08X gate2ptr=0x%08X [ptr]=0x%08X waitword31388=%u lr=0x%08X (#%u)\n",
+          cpu->gpr[3], p, v, w, cpu->lr, _n); }
+      return false; }
     // fzEYzb9: 16C94 (dispatched entry) encloses the native 16D50
     // flag-setter tail (flag-31592=1 + flag-31560=1). Fires => setter
     // runs; dump the flag to confirm it lands.
