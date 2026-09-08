@@ -1693,18 +1693,9 @@ void recomp_run_slice(void){
             if(g_cpu.pc == HLE_CALLBACK_RETURN){
               if(dol_hle_poll_nested(&g_cpu)){ cbpc = g_cpu.pc; continue; }
               break; }
-            // fzEYzb23: post-lap effect probe — after each resumed call,
-            // dump the DVD globals to learn WHERE the 18D1C frame dies:
-            // 18D68 sets m48=7/m56=0/m60=0(curblk)/b12=10; 19270 sets
-            // m48=0/m56=0/curblk=r31+64/b30+12=10; 1920C files b12=-1 +
-            // calls 1A178; 1922C re-issues STOPMOTOR via 16920. First-8
-            // post-lap pcs + every-200k keep it bounded.
-            { static unsigned _rl=0; _rl++;
-              if(_rl<=16){ uint32_t m60=0xDEADu,m56=0xDEADu,m48=0xDEADu,cb=0;
-                guest_read32(g_cpu.gpr[13]-31460u,&m60); guest_read32(g_cpu.gpr[13]-31456u,&m56);
-                guest_read32(g_cpu.gpr[13]-31448u,&m48); guest_read32(g_cpu.gpr[13]-31488u,&cb);
-                fprintf(stderr,"[cb] post-lap#%u pc=0x%08X m60=%u m56=%u m48=%u curblk=0x%08X\n",
-                  _rl, g_cpu.pc, m60, m56, m48, cb); } }
+            // fzEYzb23 (answered — decode recorded in the fzEYzb25 comment;
+            // tracer now quiet: it confirmed the frame exits via 1A178
+            // lr=19230 with m60=14 frozen, and would spam every run).
             dolrecomp_call(&g_cpu, g_cpu.pc); }
           dol_hle_handle_callback_return(&g_cpu, HLE_CALLBACK_RETURN);
           continue; }
