@@ -686,11 +686,32 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // nested STOPMOTOR completion's 17958 path files b12... static:
     // 19708 stw r0,12(r31) with r0=2 — but 18D1C entry shows b12=1, so
     // something decremented/wrote 1 between 19700 and 18D1C: the 189CC
-    // drain (m48 cascade) or the 18CC8 re-issue leg. NEXT fzEYzb34: read
-    // the 18CC8 leg (the ONLY dispatched row): what does it write to the
-    // block before 16A38 (c0=0x12 INQUIRY), and what SHOULD advance m60
-    // past 14 after a successful INQUIRY (compare Dolphin: drive state
-    // after INQUIRY+cover-closed => READY => next command is READ)?
+    // drain (m48 cascade) or the 18CC8 re-issue leg.
+    // fzEYzb34 (answered statically — 18CC8 decoded): the leg writes
+    // NOTHING to the drive state — it copies [0xCC006014]+4 to the block,
+    // sets [blk+28]=32, then 18CEC bl 16A38 re-issues INQUIRY (c0=0x12).
+    // m60 is never touched on this path: the ONLY m60 writers in the
+    // whole 18xxx region are 18870 ([curblk+8] tag copy) and 18BDC
+    // (r0=1, tag-8 row only). The 18D1C completion body likewise never
+    // writes m60 except via the 18870/18860 drain calls. So after a
+    // successful INQUIRY the guest ITSELF re-issues INQUIRY (tag stays 14,
+    // m60 stays 14) — the ADVANCE to READ must come from the SLOT
+    // callback (block+40, filed by 19500) or from the upper layer (1A3F4
+    // chain via 1780C) — both dead (19500 never fires; 177F8 always to
+    // 17814). The loop is architecturally closed: INQUIRY completes ->
+    // state unchanged -> INQUIRY re-issues.
+    // fzEYzb35 (answered statically — 17F54-gated writer decoded): the
+    // 17FAC m56-writer is REACHED only via 17F8C (m60=2): 17F90 loads
+    // curblk, 17F98 m48=2, 17FA4 curblk=r31.const, 17FA8 r0=10, 17FAC
+    // stw r3->m56 with r3=0 (17FA0 li r3,0) => m56=0 CLEARER, not setter.
+    // So the ONLY true m56=1 setter in the entire DVD region is... NONE
+    // found yet: 17FAC writes r3=0, all other -31456 writers write r0=0
+    // or r4=0. m56 is cold-zero and every fork that needs m56==1
+    // (179C4->179C8 slot-invoke leg, 18DD4->18DD8 m48=7 leg, 1928C->19290
+    // success leg) is untaken BY CONSTRUCTION. The 17F80 fork
+    // (m56!=0 -> 17FF8 vs m56==0 -> 17F8C clearer) likewise always takes
+    // the clearer. NEXT: the 030CE halfword gate (A360: A398 stores
+    // [r30]+2|0x8000 vs A3A8 stores 1) — read A360's caller chain.
     if(addr==0x80019E64u){
       static unsigned _q=0; if(++_q<=2) fprintf(stderr,"[dvdsm] 19E64-entry (see fzEYzb32: idx=0 cold-start, FST live) lr=0x%08X (#%u)\n",
         cpu->lr, _q);
