@@ -716,6 +716,29 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // resume pc; host_call only sees call-target entries. Reverted. The
     // accumulator question is answered via bl-targets instead: 16850
     // (fzEW, resume pc after 18E60's bl) fires iff the 18E4C leg runs.
+    // fzEYzb24 (answered — never fires, like all mid-frame interior
+    // labels; host_call only sees call-target resume pcs). Reverted to a
+    // comment so the finding stays recorded without dead code.
+    // fzEYzb25 (answered — never fires: 18D68 is mid-frame interior, only
+    // reachable natively; resume pcs are bl-targets only). Full native path
+    // decoded statically + confirmed by post-lap tracer (frame exits via
+    // 1A178 lr=19230, m60=14 frozen). With r3=32,m60=14,m56=0,m32=0 at entry:
+    // 18D3C fallthrough (32!=0x10) -> 18D6C/18D70 fallthrough (14!=3) ->
+    // 18D78/18D7C TAKEN to 18E68 (14!=15) -> 18E70/18E7C fallthrough ->
+    // 18E80 EQ (14==0xE) -> 18E84 fallthrough -> 18E88 r0=1 -> 18EA8/18EAC
+    // fallthrough -> 18EB0 accumulator: [cb+32]=[cb+28]-[0xCC006018]+[cb+32]
+    // =32-0+0=32, so the 19270 gate (b32==b20==32) PASSES -> 18ED4 fallthrough
+    // (32&8==0) -> 18ED8 TAKEN to 18F38 (mid labels native) -> 18F3C TAKEN to
+    // 1920C (32&1==0) -> 19214 fallthrough (14==0xE) -> b12=-1, 1922C bl 1A178
+    // (report) -> 19238 bl 16920 STOPMOTOR -> 19270 gate passes -> 1928C TAKEN
+    // (m56==0) -> 192F0/192F8 fallthrough -> 192FC: b12=0, curblk=r31+64, slot
+    // null -> 19328 bl 187CC drain -> 19FA4 ret 0 -> 187F0 curblk=0 -> return.
+    // Nested STOPMOTOR completion (17958, m56 still 0) drains to curblk=0 too.
+    // Loop repeats from scratch each time: m60 self-reinforces at 14 via the
+    // 18870 writer ([curblk+8]=tag 14 -> m60); the 18BDC m60=1 leg needs tag 8
+    // (row 18B08 READ builder), never filed. NEXT: find what should file a
+    // non-14 tag / set m56=1 (writers: 179D0/17C48/17FAC/182B4/18480/18DEC/
+    // 18EE8/18F64/192A0) — m56==1 at 179C4/18DD4/1928C is the untaken fork.
     // fzEYzb22: 18BDC (dispatched) writes m60 directly (stw r0,-31468
     // with r0=1) on the path into the 18C08 tag-filer. m60 source dump
     // shows whether this leg ever advances the drive state.
@@ -762,17 +785,17 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // 19240 et al never fire (mid-chain natives in 18D1C frame).
     // fzEXd probe removed: 18F38 never fires (mid-chain native).
     // fzEXc/fzEXb/fzEZb/fzEZ probes removed: 18FB0 et al / 18DB0 et al /
-    // 18D68 et al / 18D80 never fire (mid-chain natives in 18D1C frame).
-    // fzEU: 18D40 (dispatched) is the r3==0x10 error path; 18D58/18D5C
-    // (native calls, never dispatch) route through 17958; 18D64/18D68
-    // (dispatched) continue the main body. 18D3C-branch direction is read
-    // at 18D40 vs 18D68: error path vs main body.
-    if(addr==0x80018D40u||addr==0x80018D64u){
-      static unsigned _u1=0,_u4=0;
-      unsigned *c=addr==0x80018D40u?&_u1:&_u4; (*c)++;
-      if(*c<=3||*c%5000000==0) fprintf(stderr,"[dvdsm] %s r3=0x%08X (#%u)\n",
-        addr==0x80018D40u?"18D40-errpath":"18D64-tail",
-        cpu->gpr[3], *c);
+    // 18D80 never fires (mid-chain native in 18D1C frame). 18D68's status
+    // is RE-TESTED by fzEYzb25 below (bl-targets may dispatch it).
+    // fzEU: 18D40 (dispatched) is the r3==0x10 error path; 18D64 is a
+    // goto-target (never a resume pc); 18D58/18D5C are native bls.
+    // 18D40 firing with r3==0x10 confirms the ERRPATH into 1A178;
+    // 18D68 (fzEYzb25) firing instead would mean the 18D3C branch fell
+    // through to the main body. Direction read at 18D40 vs 18D68 only.
+    if(addr==0x80018D40u){
+      static unsigned _u1=0; _u1++;
+      if(_u1<=4||_u1%5000000==0) fprintf(stderr,"[dvdsm] 18D40-errpath r3=0x%08X (#%u)\n",
+        cpu->gpr[3], _u1);
       return false; }
     // fzEN: 187E8 dispatches (downcount) with r3 = 19FA4's return value.
     // r3==0 -> 187F0 early-out (no restore); r3!=0 -> 187FC continue to
