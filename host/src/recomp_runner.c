@@ -1846,6 +1846,16 @@ void recomp_run_slice(void){
           // frame returns, before the slice context is restored. Guarded:
           // 1M re-entries then restore + fall through to slice dispatch.
           int guard = 0;
+          // fzEYzb48 (answered — frame terminates in <4k re-entries each
+          // time: no frame# log ever printed, no guard trip. The 4
+          // dispatches + 4 trampolines in 20s = completions #1-3 run to
+          // HLE_CALLBACK_RETURN cleanly (CORRECTION from live counts:
+          // the ISSUE side does NOT stall — 16A38 issues reach #800+ and
+          // 18D1C completions reach #7+ in the same run. The 3-dispatch
+          // count was the probe's first-3 cap, not a stall. The loop is
+          // INQUIRY->completion->STOPMOTOR->completion->INQUIRY... at
+          // full rate, 800+ issues in 20s. It never STALLS and never
+          // ADVANCES: a limit cycle at full speed, not a deadlock.)
           for(;;){
             if(++guard > 1000000){
               { static int _w=0; if(!_w){ _w=1;
