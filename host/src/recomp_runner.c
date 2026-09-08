@@ -606,14 +606,8 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // fzEYzb5/fzEYzb4 probes removed: 18EDC/18E90/18FE0 never fire
     // (mid-chain natives in 18D1C frame).
-    // fzEYzb16: 16DC0/19E64 (both dispatched entries) are the native
-    // calls at 17798/1779C preceding the workarea writer. If 16DC0
-    // fires but 19E64 never does, the frame dies inside 16DC0.
-    if(addr==0x80016DC0u||addr==0x80019E64u){
-      static unsigned _n1=0,_n2=0; unsigned *c=addr==0x80016DC0u?&_n1:&_n2; (*c)++;
-      if(*c<=4) fprintf(stderr,"[dvdsm] %s r3=0x%08X lr=0x%08X (#%u)\n",
-        addr==0x80016DC0u?"16DC0":"19E64", cpu->gpr[3], cpu->lr, *c);
-      return false; }
+    // fzEYzb16: superseded by fzEYzb31/32 below (19E64-entry index dump).
+    // (Old r3-only probe removed to avoid double-fire with fzEYzb32.)
     // fzEYzb15: 177A0/177A4 (both dispatched) bracket the 177AC workarea
     // writer (native stores r0=0x80000000 to r13-31480!). The null base
     // is filed by guest code itself — not a missing installer. Dump r0.
@@ -657,11 +651,53 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // fzEYzb18: 17788/17824 (both dispatched) are the 17784-gate
     // sides: 17788 fallthrough (toward 177F0 branch) vs 17824 taken
     // (away). r0 = [r13-31424] selects; 1776C fires so entry runs.
-    if(addr==0x80017788u||addr==0x80017824u){
-      static unsigned _g1=0,_g2=0; unsigned *c=addr==0x80017788u?&_g1:&_g2; (*c)++;
-      if(*c<=4){ uint32_t v=0; guest_read32(cpu->gpr[13]-31424u,&v);
-        fprintf(stderr,"[dvdsm] %s flag-31424=%u lr=0x%08X (#%u)\n",
-          addr==0x80017788u?"17788-fall":"17824-taken", v, cpu->lr, *c); }
+    // fzEYzb30 (answered — 17788/17824 never fire in the 20s run: like
+    // 18EB0/18ED4 they are NATIVE-only stretches inside the 1776C frame,
+    // not resume pcs. The 1776C frame runs: 1776C(entry) -> ... -> 17788
+    // native -> 1778C bl ABBC -> 17790 -> 17794 (flag=1) -> 17798 bl 16DC0
+    // -> 1779C bl 19E64 -> 177A0 bl 15F80 -> 177A4 -> 177AC (const writer)
+    // -> 177BC bl D540 -> 177C0 -> 177C4 bl D944 -> 177C8 -> 177CC bl 1029C
+    // -> 177D0 (all dispatched bl-targets) -> 177E4 chain NATIVE to the
+    // 177F8 gate, which branches native to 17814 (never 177FC). So the ONLY
+    // dispatched pcs of the frame are the bl-target entries; everything
+    // else runs native exactly once per 1776C. Reverted to no-probe.
+    // fzEYzb31 (answered — 16DC0 ENTRY always shows r3=0xFFFFFFFF because
+    // r3 is the CALLER's leftover; the body sets r3=lis(-32768)=0x80000000
+    // itself at 16DC0. The real dump needs POST-body state. But the
+    // [0x80000038+56] read is REAL DATA: 0x64638000 = 'dc'+0x8000 — the
+    // FST string-table magic ('dc' = disc content marker at fst+56?).
+    // So the workarea indexer READS LIVE FST DATA (our side-effect FST at
+    // 0x81200000 via 102AC + 0x80000038 pointer). The chain is INTACT.
+    // fzEYzb32 (answered): r13-31508(idx)=0 at 19E64 entry — the 16DC0
+    // indexer files index = [fst_word]*12 + base => FST entry 0's offset
+    // (first file). The queue index is COLD (0) because this is the FIRST
+    // command ever issued (boot's INQUIRY) — correct, not a bug. The chain
+    // 17798/1779C (16DC0/19E64) is INTACT; the FST read is LIVE.
+    // fzEYzb33 (answered statically — 19690 decoded): the block filer
+    // writes tag=14 ITSELF (19698 li r0,14 + 196AC stw r0,8(r3)) — even
+    // before the boot INQUIRY issues. The 19700 leg then files b12=2.
+    // So tag 14 is the COLD-START tag for EVERY boot block: the queue
+    // NEVER holds anything but INQUIRY-class blocks until something files
+    // a different tag — and the only other tag-filers (tag 8 via 18B08
+    // READ row, tag 5 via 19500 slot-reg, tags 1/4 via 19430/1944C) are
+    // all downstream of a SUCCESSFUL non-INQUIRY completion. b12=1 at
+    // 18D1C entry is the 19708 filer (li r0,2? no — 18D1C shows b12=1:
+    // the 19700 leg's b12=2 overwritten by the 18DD8 path? or the
+    // nested STOPMOTOR completion's 17958 path files b12... static:
+    // 19708 stw r0,12(r31) with r0=2 — but 18D1C entry shows b12=1, so
+    // something decremented/wrote 1 between 19700 and 18D1C: the 189CC
+    // drain (m48 cascade) or the 18CC8 re-issue leg. NEXT fzEYzb34: read
+    // the 18CC8 leg (the ONLY dispatched row): what does it write to the
+    // block before 16A38 (c0=0x12 INQUIRY), and what SHOULD advance m60
+    // past 14 after a successful INQUIRY (compare Dolphin: drive state
+    // after INQUIRY+cover-closed => READY => next command is READ)?
+    if(addr==0x80019E64u){
+      static unsigned _q=0; if(++_q<=2) fprintf(stderr,"[dvdsm] 19E64-entry (see fzEYzb32: idx=0 cold-start, FST live) lr=0x%08X (#%u)\n",
+        cpu->lr, _q);
+      return false; }
+    if(addr==0x80016DC0u){
+      static unsigned _n=0; if(++_n<=2) fprintf(stderr,"[dvdsm] 16DC0-entry (r3=caller leftover, see fzEYzb31) lr=0x%08X (#%u)\n",
+        cpu->lr, _n);
       return false; }
     // fzEYzb12: 177FC (dispatched) is the 177F8-fallthrough side toward
     // 1780C/1A3F4; 17814 is the branch-taken side. r3 = [r13-31480]+32
