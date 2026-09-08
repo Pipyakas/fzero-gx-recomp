@@ -736,9 +736,20 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // Nested STOPMOTOR completion (17958, m56 still 0) drains to curblk=0 too.
     // Loop repeats from scratch each time: m60 self-reinforces at 14 via the
     // 18870 writer ([curblk+8]=tag 14 -> m60); the 18BDC m60=1 leg needs tag 8
-    // (row 18B08 READ builder), never filed. NEXT: find what should file a
-    // non-14 tag / set m56=1 (writers: 179D0/17C48/17FAC/182B4/18480/18DEC/
-    // 18EE8/18F64/192A0) — m56==1 at 179C4/18DD4/1928C is the untaken fork.
+    // (row 18B08 READ builder), never filed.
+    // fzEYzb26: m56 writers decoded statically — ALL reachable natives except
+    // the 18E00/18E14-style slot legs (slot null here) are m56=0 CLEARERS
+    // (18DEC/18EE8/18F64/192A0/179D0/17C48 li r0,0 + stw m56). The only SETTER
+    // is 17FAC (stw r3->m56) inside the 17F54-gated writer: with m60=14 the
+    // 17F54 (m60!=5) -> 17F60 (m60!=13) -> 17F6C/17F74 fallthrough (14!=15)
+    // sets m32=1 then READS m56 (0) -> 17F84/17F88 TAKEN to 17FF8 only if m56
+    // is ALREADY 1. So 17FAC is gated on m56==1 — circular: nothing ever sets
+    // the first 1. Same for slot+40 (19500 never fires) and m60 (18BDC needs
+    // tag 8). The drive state is cold-started at zeros and the INQUIRY path
+    // never warms it: the REAL question is what the native boot SHOULD have
+    // run before 1776C — i.e. whether 1776C's own frame (16DC0/19E64/177AC
+    // writer chain) is intact, and what calls 1776C with r3=0 (A72C) vs the
+    // r3=0x80120000 path (5674) that may register slots.
     // fzEYzb22: 18BDC (dispatched) writes m60 directly (stw r0,-31468
     // with r0=1) on the path into the 18C08 tag-filer. m60 source dump
     // shows whether this leg ever advances the drive state.
