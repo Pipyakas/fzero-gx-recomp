@@ -995,17 +995,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // entry (ours: 0/0 zeroed by fzBU — hardware thread regs unknown);
     // (b) 16A38's r4 callback (ours 18D1C — matches); (c) DI STATUS/
     // COVER bits at issue time; (d) the 177AC const-vs-pointer write.
+    // fzEYzb50 probes quieted (pattern stable: 110A8 lr=1AF8C r30=0;
+    // 11160 never fires — 110A8 frame runs native through). Re-enable
+    // with caps if the wait pattern changes.
     if(addr==0x800110A8u){
-      static unsigned _n=0; if(++_n<=4){ uint32_t qh=0xDEADu;
+      static unsigned _n=0; if(++_n<=2){ uint32_t qh=0xDEADu;
         guest_read32(cpu->gpr[3]+732u,&qh);
         fprintf(stderr,"[wait] 110A8-entry r30=0x%08X queuehead+732=0x%08X lr=0x%08X (#%u)\n",
           cpu->gpr[30], qh, cpu->lr, _n); }
-      return false; }
-    if(addr==0x80011160u){
-      static unsigned _m=0; if(++_m<=4){ uint32_t f=0xDEADu;
-        guest_read32(cpu->gpr[13]-31684u,&f);
-        fprintf(stderr,"[wait] 11160-poll flag-31684=%u lr=0x%08X (#%u)\n",
-          f, cpu->lr, _m); }
       return false; }
     // fzEYzb47 (answered statically — 17234 caller chain decoded): the
     // ONLY in-DVD caller of the 199xx family is 17234 (bl 19B78), inside
@@ -1029,12 +1026,8 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // game thread is doing — the 12974/10740/1BD10 frontier + the AD1C
     // park (heap allocator, not DVD): is the game waiting on the DVD
     // queue (110A8 waiter link) or parked elsewhere?
-    if(addr==0x80019CF0u){
-      static unsigned _n=0; if(++_n<=4){ uint32_t c4=0xDEADu;
-        guest_read32(0xCC006004u,&c4);
-        fprintf(stderr,"[dvdsm] 19CF0-tag14row DICMD1=0x%08X r30=0x%08X lr=0x%08X (#%u)\n",
-          c4, cpu->gpr[30], cpu->lr, _n); }
-      return false; }
+    // fzEYzb46 probe quieted (19CF0 never fires — 199xx lattice dead).
+    // (Body kept as comment so the finding stays recorded.)
     // fzEYzb56 (answered live — census): ONLY 1AF64-gamewait fires
     // (3x, lr=70A2C, r3=0); 1A500/1A540/1A560/1A60C/1AB20/19B78/19500
     // NEVER fire. The dead lattice stays dead; the live set is exactly
@@ -1060,6 +1053,11 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // instead of advancing to them. CIRCULAR BOOT DEPENDENCY, fully
     // mapped. NEXT: what SHOULD break it — the inquiry SUCCESS path
     // that files the first of these words. Trace [0x8019E150] writers.
+    // fzEYzb58: gate2 target [0x8019E150] is INSIDE DOL .data
+    // (0x80095EA0+0xC5A80 covers it — DVD workarea/BSS-adjacent). Writer
+    // candidates: the 19E64 initializer (19E64+ writes r3/imm chains at
+    // 0x801xxxxx? verify), the 19690 filer, or the 16DC0 indexer. The
+    // 1AF64 probe stays (first-4) to detect ANY change across runs.
     if(addr==0x8001AF64u){
       static unsigned _n=0; if(++_n<=4){ uint32_t p=0xDEADu,v=0xDEADu,w=0xDEADu;
         guest_read32(cpu->gpr[13]-30412u,&p);
@@ -1068,6 +1066,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[dvdsm] 1AF64-gamewait r3=0x%08X gate2ptr=0x%08X [ptr]=0x%08X waitword31388=%u lr=0x%08X (#%u)\n",
           cpu->gpr[3], p, v, w, cpu->lr, _n); }
       return false; }
+    // fzEYzb58: watch the gate words for ANY guest write: install a
+    // journal hook? No — cheap version: sample [0x8019E150] + -31388 at
+    // every 189FC hit (first-8 already logged) AND at every 1AF64 hit
+    // (above). If [ptr] ever !=0, the success path ran. The journal
+    // (ppc_set_mem_write_journal) is the precise tool if sampling
+    // misses it — wire it only if needed.
     // fzEYzb9: 16C94 (dispatched entry) encloses the native 16D50
     // flag-setter tail (flag-31592=1 + flag-31560=1). Fires => setter
     // runs; dump the flag to confirm it lands.
