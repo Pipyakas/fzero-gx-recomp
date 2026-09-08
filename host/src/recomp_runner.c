@@ -222,8 +222,31 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         return DOL_DI_COMMAND_COMPLETE;
     }
     // Motor/stop/reset class (dolsdk2001 DVDLowStopMotor 0xE3, Reset etc.):
-    // no payload, no DMA. COMPLETE (not ERROR) so the SDK state machine
-    // advances instead of retrying down an error path.
+    // no payload, no DMA.
+    // fzEYzb53 (answered statically — 19218/1922C decoded): the 1920C
+    // gate (m60!=0xE, ours 14) ALWAYS takes 19218 on our runs: b12=-1,
+    // 1922C bl 1A178 error-report (r3=0x01234567 = ASCII?? 0x01234567 —
+    // actually a tag/cookie constant), then 19238 bl 16920 STOPMOTOR.
+    // So EVERY INQUIRY completion flows: 18D1C body -> ... -> 1920C
+    // (m60=14 != 0xE? NO: 14==14==0xE! 19210 cmplwi r0,0xE / 19214 bc-4,2
+    // = branch if NE. m60=14 IS 0xE => EQ => NO branch => FALL to
+    // 19218 error leg!). Wait — that means m60==0xE TAKES the error
+    // leg, and only m60!=0xE advances to 19240?! INVERTED from the
+    // naive reading: the error leg is the m60==14 path. Hmm, but 19218
+    // files b12=-1 = ERROR... and then issues STOPMOTOR. So on Dolphin
+    // with m60==0xE the same error leg runs? Then what makes m60!=0xE?
+    // The 18870 writer copies [curblk+8]=tag: tag 14 => m60=14=0xE.
+    // Tags are SMALL ints (1,2,4,5,8,11,13,14,15): m60==0xE means
+    // "last completed tag was 14 (INQUIRY)". The 19210 gate: m60==0xE
+    // => this completion WAS an inquiry => report + stop motor (spin
+    // down after inquiry phase?) — the BOOT SEQUENCE, not an error!
+    // 1A178 r3=0x01234567 is likely the inquiry-success cookie. The
+    // ADVANCE (19240: m60==1/4/5/0xE?-gates) handles OTHER tags. So the
+    // loop is CORRECT BOOT BEHAVIOR: inquiry, report, stop-motor,
+    // repeat until the UPPER LAYER issues something else. The upper
+    // layer (game thread at 1AF64/110A8 wait) never does — THAT is the
+    // stall, not the DVD thread. REDIRECT: fix the game-thread wait
+    // ([r13-31388] waker at 1A618, unreachable 1A5xx chain).
     if((c0 & 0xFF000000u) == 0xE3000000u){
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec STOPMOTOR (complete)\n"); _n++; } }
         // fzCD: STOPMOTOR completion must ALSO mark block+12. The inquiry
