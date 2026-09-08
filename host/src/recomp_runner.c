@@ -684,13 +684,89 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // NEVER holds anything but INQUIRY-class blocks until something files
     // a different tag — and the only other tag-filers (tag 8 via 18B08
     // READ row, tag 5 via 19500 slot-reg, tags 1/4 via 19430/1944C) are
-    // all downstream of a SUCCESSFUL non-INQUIRY completion. b12=1 at
-    // 18D1C entry is the 19708 filer (li r0,2? no — 18D1C shows b12=1:
-    // the 19700 leg's b12=2 overwritten by the 18DD8 path? or the
-    // nested STOPMOTOR completion's 17958 path files b12... static:
-    // 19708 stw r0,12(r31) with r0=2 — but 18D1C entry shows b12=1, so
-    // something decremented/wrote 1 between 19700 and 18D1C: the 189CC
-    // drain (m48 cascade) or the 18CC8 re-issue leg.
+    // all downstream of a SUCCESSFUL non-INQUIRY completion.
+    // fzEYzb39 (answered statically — b12=1 source found): the 199xx
+    // dispatcher (19900-frame: 19920 lwz r4,12(r29)/19928 addi r0,r4,1 /
+    // 1992C cmplwi r0,12 / 19930 bc-then 19B50) routes b12+1==12 (i.e.
+    // b12==11) to the 19934 jump-table path, else falls to 19988
+    // (m56=1 setter, untaken — m56 cold 0 takes 19978/19984 zero-leg).
+    // b12 counts 2,3,...,11 across successive completions via the 19994
+    // leg (1999C bc-then 199A8 filer: b12=r0=[r29+8] vs 4-gate); at b12+1
+    // ==12 the 19934 table dispatches the NEXT PHASE (likely the READ).
+    // fzEYzb39 (answered live — b12 RESETS to 1 every completion, #1-8
+    // identical): the counter never advances because each completion runs
+    // the 192FC clearer (b12=0) + the next issue re-files the block fresh
+    // (19690 b12=2 -> 18D1C entry shows 1 after the 18DD8-path decrement?
+    // exact reset site TBD, but the EFFECT is confirmed: the retry counter
+    // is pinned at 1, so the 19930 jump-table phase (b12+1==12) is
+    // unreachable). The loop is a STABLE LIMIT CYCLE, not a slow ramp.
+    // fzEYzb40 (answered statically — 16D50 decoded): the 199A8 filer
+    // (tag==4 leg) calls 16D50 which sets waiter-flag -31592=1 AND
+    // -31560=1 (drive-ready?). The tag==4 leg is itself downstream of the
+    // 19994 tag==4 check — unreachable while tags stay 14. The whole
+    // 199xx dispatcher is a dead lattice from the cold state.
+    // CONCLUSION (DVD loop fully decoded, all forks cold): the guest
+    // runs its BOOT inquiry sequence correctly; the advance to READ
+    // requires either (a) the slot callback (19500, never fires — needs
+    // the 1A3F4 upper-layer registration via the dead 177FC side), or
+    // (b) a cover/drive state change the HLE never signals (our DI cover
+    // reports CLOSED but the STATUS register may lack the READY/TCINT
+    // bits the guest polls at 14170: 0x800030CE==0x8200?). NEXT: probe
+    // the 14170 flag-check leg (does the guest see drive-ready?) and the
+    // DI STATUS/COVER register values we report vs Dolphin.
+    // fzEYzb41 (answered statically — 13F9C-14180 upper layer decoded):
+    // the 13FAC frame reads b12 (block+12) bit0: set => 1418C (slot
+    // re-invoke path), clear => 13FB8 bit2 check => 13FC4/13FCC bit
+    // decodes => 140F8 (r3<=0xFF gate) => 14100/14110/14114/14120/14128/
+    // 14140/14148/14158 cascade (block-word signature checks: -257<<16,
+    // -1287<<16, -1058<<16 patterns = FST/file magic compares) => 1416C
+    // 030CE halfword gate (0x8200 = drive READY+cover-closed?) => 1417C
+    // (r28=1, continue) vs 14170 (read flag, compare, 14180 continue).
+    // With b12=1 (bit0 SET): 13FA0 bit0 => TAKEN to 1418C — the
+    // SLOT path, not the 030CE gate. So the upper layer DOES dispatch
+    // past the flag check iff the slot (block+40) is non-null. It is
+    // null (19500 never filed) => which 1418C leg? Read 1418C next.
+    // fzEYzb42 (answered statically — 1418C/1418C-141AC decoded): 1418C
+    // reads [r31+12] bit2: set => 14198 (r3=r28, return to caller — the
+    // upper layer CONTINUES with r28 status), clear => 13F9C (back to the
+    // b12-bit0 gate = INFINITE UPPER-LEVEL SPIN on the same block while
+    // bit2 stays clear). r31 here = the 13F64-frame's block cursor
+    // (r29/r31 = queue walk: r29 = base+idx*20 entry). bit2 of [blk+12]
+    // is the COMPLETION-DONE bit — filed by the 18Dx completion body as
+    // b12=10? No: b12 values seen are 1,2,10,-1. bit2 set means b12&4:
+    // b12=10 (0b1010) HAS bit2... wait 10=0b1010, bit2 (val 4)? 10&4=0.
+    // Hmm: b12=10 has bits 1,3. bit2 (value 4) is CLEAR. b12=1: clear.
+    // b12=2: clear. b12=-1 (0xFFFFFFFF): SET. So the 1418C gate passes
+    // (to 14198 continue) ONLY when b12==-1 — the ERROR path value filed
+    // by 19218/19224 (and 18DA0 etc.)! The upper layer spins at
+    // 13F9C->1418C->13F9C until a completion files b12=-1?? That can't
+    // be right either — recheck: 14190 rlwinm. r0,r0,0,29,29 = bit3
+    // (value 4? PPC bit numbering: bits 29,29 = mask 0x00000004 = value
+    // 4 = bit2 zero-indexed). b12=-1 has it set; b12=10 (0xA) doesn't.
+    // So YES: upper layer waits for b12==-1?? But our completions file
+    // b12=10 (success) via 18DF8/192A8 etc. — which would SPIN FOREVER.
+    // INVERSION? Or b12==-1 means DONE-WITH-ERROR and the upper layer
+    // then READS the error and re-issues? NEXT: who calls 13F64/13F9C
+    // (the 13C00/13EFC/145D8/151A0 bl 141B0 sites) and what b12 values
+    // do THEY expect — read the 141B0 wrapper.
+    // fzEYzb43 (answered statically — 13BB8/13BC8 bit gates decoded): the
+    // 13BB4-frame reads [r31+12] TWICE: 13BBC bit0-1 (rlwinm mask 3):
+    // nonzero => 13BD0 zero-leg (r3=0, skip); zero => 13BC4 bit2 check
+    // (mask 4): nonzero => 13BE0 (stw r25,4(r31) filer + 13BE4 zero-check
+    // => 13BF0 bl 141B0 READ-ISSUE with r3=r26,r4=0,r5=1,r6=0!); zero =>
+    // 13BD0 zero-leg. With b12=1: bit0-1 = 01 nonzero => 13BD0 zero-leg
+    // (r3=0, NO read). With b12=10 (0b1010): bit0-1 = 10 nonzero =>
+    // zero-leg too! With b12=2 (0b10): nonzero => zero-leg. With b12=0:
+    // zero => bit2 check: clear => zero-leg. ONLY b12 with bit0-1==0 AND
+    // bit2==1 passes to 13BE0: b12=4 (0b100)! So the READ-ISSUE leg needs
+    // b12==4 exactly (among small values). Our b12 is pinned at 1 (bit0-1
+    // nonzero) => zero-leg => r3=0 => 13DC4... the upper layer returns 0
+    // (not-ready) and the boot NEVER proceeds to READ. The b12 values are
+    // a STATE MACHINE: 0=idle, 1=issued, 2=??, 4=ready-to-read senior?,
+    // 10=done?, 11=??, -1=error. The completion body MUST advance
+    // 1->2->4 via the 199xx dispatcher — which needs the slot/tag-8
+    // machinery that is cold. CONFIRMED END-TO-END: the DVD subsystem is
+    // waiting on b12==4 and nothing can produce it from the cold state.
     // fzEYzb34 (answered statically — 18CC8 decoded): the leg writes
     // NOTHING to the drive state — it copies [0xCC006014]+4 to the block,
     // sets [blk+28]=32, then 18CEC bl 16A38 re-issues INQUIRY (c0=0x12).
