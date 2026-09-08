@@ -260,6 +260,23 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
     // FUNCTION POINTER (slot callback? 199xx bctr table? OS thread?).
     // Grep for 1A5xx/1A6xx addresses taken as VALUES (lis/addi loads),
     // not just bl targets.
+    // fzEYzb55 (answered statically — 1A9xx is VIDEO, not DVD): the
+    // 1A9xx region (1A980+: lhz/lbz field extracts + sth packs at
+    // 8192/8206 offsets; 1AA28+: srawi/addze fixed-point; 1AA40+: sth
+    // video-mode tables at 8240-8246) is the VIDEO MODE / FRAMEBUFFER
+    // setup (1AB20 zeroes -31388/-31348/-31352/-31332 = the DVD wait
+    // words as a SIDE EFFECT of video init!). 1AAE0-frame: waits
+    // [-31392]==0 -> files -31392=1, -31364=1, then polls a VIDEO
+    // register (8192+2 bit0) via 1AB08 lhzu loop -> 1AB1C: r31=0 filer
+    // (1AB20 stw r31,-31388 = CLEARS the DVD-wait word to 0!) + more
+    // zero-filers. So VIDEO INIT clears [r13-31388]=0 — and the game
+    // waiter (1AF64: r30=[word] at entry, exits iff word CHANGES)
+    // entered with r30=0 and waits for NONZERO? No: exits iff
+    // r30!=[word]-now; word stays 0 => spins. The 1A618 INCREMENTER
+    // (+1) is what SHOULD wake it — 1A618 sits in the 1A5FC-taken leg
+    // (1A5F8 bit3 of r7 set?). The 1A5xx caller question stands, but
+    // NOTE: 1AB20 writes 0 (not a wakeup); only 1A618 wakes. NEXT:
+    // what sets up r7's bit3 for the 1A5F8 gate, and who calls 1A5xx?
     if((c0 & 0xFF000000u) == 0xE3000000u){
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec STOPMOTOR (complete)\n"); _n++; } }
         // fzCD: STOPMOTOR completion must ALSO mark block+12. The inquiry
