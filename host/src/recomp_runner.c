@@ -711,6 +711,11 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           addr==0x80016394u?"16394-entry":"163DC-build",
           cpu->gpr[3], cpu->gpr[30], c0, c1, da, dl, cpu->lr, *c); }
       return false; }
+    // fzEYzb23 (answered): 18EB0/18ED4 can NEVER fire — 18EB0 has no
+    // downcount (native-only stretch) and 18ED4 is a goto-target, never a
+    // resume pc; host_call only sees call-target entries. Reverted. The
+    // accumulator question is answered via bl-targets instead: 16850
+    // (fzEW, resume pc after 18E60's bl) fires iff the 18E4C leg runs.
     // fzEYzb22: 18BDC (dispatched) writes m60 directly (stw r0,-31468
     // with r0=1) on the path into the 18C08 tag-filer. m60 source dump
     // shows whether this leg ever advances the drive state.
@@ -1534,9 +1539,18 @@ void recomp_run_slice(void){
             if(g_cpu.pc == HLE_CALLBACK_RETURN){
               if(dol_hle_poll_nested(&g_cpu)){ cbpc = g_cpu.pc; continue; }
               break; }
-            // fzEX/fzEY: resume trace DISABLED (was first-40 + every-200k;
-            // answered: frame runs away into 1A178 error-report chain, never
-            // returns — the completion path is wrong, not slow).
+            // fzEYzb23: post-lap effect probe — after each resumed call,
+            // dump the DVD globals to learn WHERE the 18D1C frame dies:
+            // 18D68 sets m48=7/m56=0/m60=0(curblk)/b12=10; 19270 sets
+            // m48=0/m56=0/curblk=r31+64/b30+12=10; 1920C files b12=-1 +
+            // calls 1A178; 1922C re-issues STOPMOTOR via 16920. First-8
+            // post-lap pcs + every-200k keep it bounded.
+            { static unsigned _rl=0; _rl++;
+              if(_rl<=16){ uint32_t m60=0xDEADu,m56=0xDEADu,m48=0xDEADu,cb=0;
+                guest_read32(g_cpu.gpr[13]-31460u,&m60); guest_read32(g_cpu.gpr[13]-31456u,&m56);
+                guest_read32(g_cpu.gpr[13]-31448u,&m48); guest_read32(g_cpu.gpr[13]-31488u,&cb);
+                fprintf(stderr,"[cb] post-lap#%u pc=0x%08X m60=%u m56=%u m48=%u curblk=0x%08X\n",
+                  _rl, g_cpu.pc, m60, m56, m48, cb); } }
             dolrecomp_call(&g_cpu, g_cpu.pc); }
           dol_hle_handle_callback_return(&g_cpu, HLE_CALLBACK_RETURN);
           continue; }
