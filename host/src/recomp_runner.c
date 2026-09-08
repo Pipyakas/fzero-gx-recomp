@@ -163,12 +163,14 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         if(a < cmd->cpu->ram_size) a |= GC_RAM_BASE;
         if(a >= GC_RAM_BASE && a + 32 <= GC_RAM_BASE + cmd->cpu->ram_size){
             uint8_t* d = cmd->cpu->ram + (a - GC_RAM_BASE);
-            // GameCube SDK-era drive values. Dolphin's 0x00000002 /
-            // 0x20060526 / 0x41000000 are explicitly from a Wii and are
-            // unsuitable for F-Zero GX's GC drive-state checks.
-            d[0]=0x00; d[1]=0x01; d[2]=0x00; d[3]=0x00;
-            d[4]=0x20; d[5]=0x01; d[6]=0x10; d[7]=0x23;
-            memset(d+8, 0, 24);
+            // Dolphin-exact DVDLowInquiry payload (DVDInterface.cpp):
+            // 0x00000002 / 0x20060526 / 0x41000000. Prior GC-era guess
+            // (rev 1 / 0x20011023) never advanced the guest state machine;
+            // match Dolphin byte-for-byte, then let the guest decide.
+            d[0]=0x00; d[1]=0x00; d[2]=0x00; d[3]=0x02;
+            d[4]=0x20; d[5]=0x06; d[6]=0x05; d[7]=0x26;
+            d[8]=0x41; d[9]=0x00; d[10]=0x00; d[11]=0x00;
+            memset(d+12, 0, 20);
         }
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec INQUIRY -> guest 0x%08X\n", cmd->dma_address); _n++; } }
         // EXP fzV: drop the r13-31592=1 flag raise. Rationale: it fires on
@@ -208,6 +210,14 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           // fzEYzb2: queue result = transferred length (32), matching
           // DVDCBCallback(result=bytes, block). r3=0 read as zero-length
           // failure at 18D80/18F38 bit branches + 19270 gate.
+          // fzEYzb44 (answered live — m56=1 seeded, loop UNCHANGED:
+          // still 1A178 lr=19230 per completion, INQUIRY re-issues, b12=1,
+          // m60=14. The 18DD8 success leg runs (m48=7 filed then drained)
+          // but converges back to the same re-issue: the success leg ALSO
+          // ends at 18CC8/16A38 INQUIRY, not at READ. Correct per static
+          // decode — 18DD8 is "inquiry succeeded, issue next inquiry",
+          // not "advance to data". REVERTED to no-seed; the loop needs a
+          // different key, not m56.)
           dol_hle_queue_guest_callback(cb, 0, block); }
         return DOL_DI_COMMAND_COMPLETE;
     }
@@ -685,14 +695,22 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // a different tag — and the only other tag-filers (tag 8 via 18B08
     // READ row, tag 5 via 19500 slot-reg, tags 1/4 via 19430/1944C) are
     // all downstream of a SUCCESSFUL non-INQUIRY completion.
-    // fzEYzb39 (answered statically — b12=1 source found): the 199xx
-    // dispatcher (19900-frame: 19920 lwz r4,12(r29)/19928 addi r0,r4,1 /
-    // 1992C cmplwi r0,12 / 19930 bc-then 19B50) routes b12+1==12 (i.e.
-    // b12==11) to the 19934 jump-table path, else falls to 19988
-    // (m56=1 setter, untaken — m56 cold 0 takes 19978/19984 zero-leg).
-    // b12 counts 2,3,...,11 across successive completions via the 19994
-    // leg (1999C bc-then 199A8 filer: b12=r0=[r29+8] vs 4-gate); at b12+1
-    // ==12 the 19934 table dispatches the NEXT PHASE (likely the READ).
+    // fzEYzb39 (CORRECTED statically — full 199xx lattice decoded): the
+    // 199xx region is a RETRY-CLASS ladder on b12=[r29+12], entered via
+    // 19900 (bl-target): 19920 r4=b12, 19928 r0=b12+1, 1992C vs 12:
+    // r0==12 (b12==11) => 19B50 (phase advance); else 19988 m56-gate
+    // (m56==0, cold) => 19978/19984 zero-leg => 1999C tag-gate:
+    // tag==4 => 199A8 (SUCCESS: bl 16D50 waiter-flags + 199B4 bl 19FFC +
+    // b12=10 filer + slot-invoke-or-drain); else 199A0 vs 1: ==1 =>
+    // 19B50 (RETRY-EXIT, no state change); else 19AA4 vs 4: ==4 =>
+    // 19AB0 (m48-gated writer: m48==0? then 19AA8 r0=3 / 19ABC r0=4
+    // filers to m48, then re-gates at 19AC4/19AD8/19AEC/19AF4/19B00 on
+    // b12 vs 5/6/11/7 — each filing m48=4/1/2/7/10 + b12=10 + drain).
+    // So b12==11 is the TERMINAL retry count (phase advance at 19B50);
+    // b12==1 (cold) exits immediately at 19A4. The ladder 2..11 needs
+    // the 19994 filer (b12=[r29+8]) — but our blocks re-file b12 fresh
+    // each issue, so the ladder never climbs. The 19B50 exits all land
+    // at 19B50: r3=r31 + bl D51C + epilogue (a RETRY-RETURN, not READ).
     // fzEYzb39 (answered live — b12 RESETS to 1 every completion, #1-8
     // identical): the counter never advances because each completion runs
     // the 192FC clearer (b12=0) + the next issue re-files the block fresh
