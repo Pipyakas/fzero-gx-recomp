@@ -752,20 +752,54 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           cpu->gpr[3], m64, cb, cpu->lr, _n); }
       return false; }
     if(addr==0x8001776Cu){
-      static unsigned _m=0; if(++_m<=6){ uint32_t m56=0xDEADu,m60=0xDEADu,cb=0,tag=0xDEADu;
+      static unsigned _m=0; if(++_m<=6){ uint32_t m56=0xDEADu,m60=0xDEADu,cb=0,tag=0xDEADu,w=0xDEADu;
         guest_read32(cpu->gpr[13]-31456u,&m56); guest_read32(cpu->gpr[13]-31460u,&m60);
         guest_read32(cpu->gpr[13]-31488u,&cb); if(cb) guest_read32(cb+8u,&tag);
-        fprintf(stderr,"[dvdsm] 1776C r3=0x%08X r4=0x%08X m56=%u m60=%u curblk=0x%08X tag=%u lr=0x%08X (#%u)\n",
-          cpu->gpr[3], cpu->gpr[4], m56, m60, cb, tag, cpu->lr, _m); }
+        guest_read32(0x800030CCu,&w);
+        fprintf(stderr,"[dvdsm] 1776C r3=0x%08X r4=0x%08X m56=%u m60=%u curblk=0x%08X tag=%u flag30CC=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], m56, m60, cb, tag, w, cpu->lr, _m); }
       return false; }
     // fzEYzb9: 16C94 (dispatched entry) encloses the native 16D50
     // flag-setter tail (flag-31592=1 + flag-31560=1). Fires => setter
     // runs; dump the flag to confirm it lands.
+    // fzEYzb36: A360 decoded statically — it is NOT a DVD gate at all:
+    // A344 cmplw r3,r31 / A348 bc-then A360 means A360 = the r3!=r31 SYNC
+    // path (A34C bl B314 worker + A350 subf/memcpy via 3458 + A35C bl 3458
+    // + A360 epilogue). The 030CE halfword (A398: [r30]+2|0x8000 vs A3A8:
+    // 1) is a per-THREAD sync word written on the A360 path only. (An old
+    // note claimed A360 fires — superseded by fzEYzb36b: it never fires;
+    // the whole A3xx family runs native inside the 5660 frame.) The
+    // A348-taken side (r3==r31, skip worker) goes A35C->A360 directly.
+    // fzEYzb36b (answered — A340 never fires either: the A3xx sync family
+    // runs INSIDE the 5660 frame (566C bl A3B0 -> native A3xx chain ->
+    // returns to 5670), and 5660 itself is called from 5648's bl — so the
+    // whole sync+1776C sequence runs native from ONE dispatch. Only
+    // bl-targets that START a dolrecomp_call are visible: 1776C fires
+    // (bl-target of A728/5670) but A340/A344/A360 never do. The sync path
+    // demonstrably RUNS (1776C fires from BOTH lr=A72C and lr=5674, and
+    // the 5674 path only executes after A3B0's sync returns). No probe
+    // can observe its interior — the question "which A348 side" is
+    // unanswerable by dispatch probe; would need a memory-watch on the
+    // 030CE halfword instead. Reverted to no-probe.
+    // fzEYzb37 (answered): flag30CC=0 on BOTH 1776C paths — the A3xx sync
+    // family (A744/A3A8 030CE stores) has NOT run when DVD init runs, OR
+    // its word is elsewhere (r3=0x80000000-based 12518 offset = 0x800030CE
+    // only if r3=0x80000000; here r3 at A3B0-entry is unknown). Either way
+    // the sync word is not the DVD gate: 1776C runs unconditionally from
+    // both callers with the word at zero. The DVD init is NOT gated by
+    // thread-sync — it runs, files the INQUIRY, and the completion loop
+    // spins on INQUIRY because the ADVANCE conditions (m56==1 forks,
+    // tag-8 filer, slot-40 invoke, 177F8-EQ side) are all cold-start
+    // zeros. NEXT fzEYzb38: stop probing the DVD loop — the loop is FULLY
+    // DECODED. The question is now comparative: what does DOLPHIN show at
+    // these same pcs (18D1C entry m56/m60, 1776C flag, 19690 tag)? If
+    // Dolphin also shows m56=0/m60=14 at 18D1C #1, the divergence is
+    // LATER (our HLE completion values vs theirs: r3=32 vs r3=0?).
     if(addr==0x80016C94u){
-      static unsigned _n=0; if(++_n<=4){ uint32_t f=0xDEADu;
+      static unsigned _m=0; if(++_m<=4){ uint32_t f=0xDEADu;
         guest_read32(cpu->gpr[13]-31592u,&f);
         fprintf(stderr,"[dvdsm] 16C94 flag-31592=%u r3=0x%08X lr=0x%08X (#%u)\n",
-          f, cpu->gpr[3], cpu->lr, _n); }
+          f, cpu->gpr[3], cpu->lr, _m); }
       return false; }
     // fzEYzb12 (answered): 18ADC runs native straight into the 18AE0
     // block that re-issues INQUIRY via 16A38 — the 16AD4 tag-filing
