@@ -909,6 +909,51 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // loop is 189FC(tag14)->18CC8->16A38 only. So the 199xx lattice is
     // for a LATER phase (post-inquiry command management) that boot
     // never reaches.
+    // fzEYzb50 (answered live — waiter trace + 1AF8C poke REMOVED):
+    // 110A8 fires 4-6x per 25s, ALL lr=1AF8C, r30=0 (NULL queue). The
+    // 1AF8C-poke removal changed NOTHING (same DVD rate, same frontier
+    // 12974, same 110A8 pattern): the poke was NOT the park driver —
+    // r30==r0 holds because the WORD never changes, not because we
+    // force it. The 1AF64-frame spins natively (1AF84->1AF88 bl 110A8
+    // -> 1AF8C/1AF94 EQUAL -> back) WITHOUT dispatching 1AF98: the
+    // game thread waits on [r13-31388] which NO completion ever files
+    // (all -31388 writers? none found in DVD region — grep later).
+    // The 11160-poll never fires (110A8 frame runs native through).
+    // NEXT fzEYzb51: who SHOULD file [r13-31388] — grep all writers;
+    // and what sits in the word now (dump at 110A8 entry).
+    // fzEYzb51 (answered statically — writers found): [r13-31388] has
+    // exactly TWO writers: 1A618 (stw r0=[r13-31388]+1, i.e. INCREMENT,
+    // in the 1A5FC-taken leg = 1A5F8 bit3-set path) and 1AB20 (stw r31,
+    // value TBD). The 1AF64 waiter exits iff [word] != r30-entry-value.
+    // 1A618 increments it — so the 1A5xx path is the WAKER. Who calls
+    // 1A5xx? NO bl to 1A5xx/1A6xx EXISTS in any chunk (grep: only case
+    // labels + one lr=1A540 return slot). The 1A5xx waker is itself
+    // unreachable from the live loop — same cold-lattice pattern as
+    // 199xx/19500/17160. The FULL picture: the DVD subsystem is a set
+    // of mutually-reachable-but-collectively-unentered phases; the live
+    // code is only the INQUIRY re-issue limb + the game-thread wait
+    // limb. The ENTRY to the rest (1A3F4 slot-chain via dead 177FC side,
+    // 199xx via 19B78 game calls that never come) never fires.
+    // NEXT fzEYzb52: stop decoding dead lattice. The RIGHT question is
+    // comparative: run Dolphin with a breakpoint/log at 18D1C #1 and at
+    // 1AF64-entry and compare register+memory state vs ours. The FIRST
+    // divergence (not the 50th downstream gate) is the fix point.
+    // Candidate first-divergences already logged: (a) r30/r31 at 18D1C
+    // entry (ours: 0/0 zeroed by fzBU — hardware thread regs unknown);
+    // (b) 16A38's r4 callback (ours 18D1C — matches); (c) DI STATUS/
+    // COVER bits at issue time; (d) the 177AC const-vs-pointer write.
+    if(addr==0x800110A8u){
+      static unsigned _n=0; if(++_n<=4){ uint32_t qh=0xDEADu;
+        guest_read32(cpu->gpr[3]+732u,&qh);
+        fprintf(stderr,"[wait] 110A8-entry r30=0x%08X queuehead+732=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[30], qh, cpu->lr, _n); }
+      return false; }
+    if(addr==0x80011160u){
+      static unsigned _m=0; if(++_m<=4){ uint32_t f=0xDEADu;
+        guest_read32(cpu->gpr[13]-31684u,&f);
+        fprintf(stderr,"[wait] 11160-poll flag-31684=%u lr=0x%08X (#%u)\n",
+          f, cpu->lr, _m); }
+      return false; }
     // fzEYzb47 (answered statically — 17234 caller chain decoded): the
     // ONLY in-DVD caller of the 199xx family is 17234 (bl 19B78), inside
     // the 17160-frame: 17160 (r30=path?, r31=dst?) -> 1717C bl 16DF8
@@ -1443,7 +1488,14 @@ void recomp_run_slice(void){
         // (was: 0x8000BE60 spoofed low-mem 0xD4=0x80003000 — removed.
         // BE5C/BE60 reads the OS global at 0x800000D4, owned by the guest;
         // seeding it corrupts the OSContext chain. Let the guest write it.)
-        else if(pc==0x80011160u) poke32_set(g_cpu.gpr[13]-31684u, 1u);
+        // fzEYzb50: 11160 WAIT-loop poke — DISABLED (was poke32_set
+        // r13-31684=1u). 11158 files r13-31684=1 itself, then 11160 polls
+        // it; forcing it masks whether the 11134/1114C waiter-link chain
+        // ever wakes the thread. With the poke REMOVED, if 11160 spins
+        // forever the waiter queue is dead; if it exits, wakeups work.
+        // (11160 never dispatches in logs — the 110A8 frame runs native
+        // from its bl-target entrypc through 11190 blr. Observe via the
+        // 110A8-entry probe + 1AF8C poke below instead.)
         // Bounded DVD state-machine probes (remove once M2 answered):
         // 189FC = completion dispatcher (r3=cmd block, +8=type tag);
         // 16018 = waiter flag check; 18CEC = inquiry re-issue site.
@@ -1797,7 +1849,12 @@ void recomp_run_slice(void){
               g_cpu.gpr[0], g_cpu.gpr[3], g_cpu.gpr[4], alg, w0, *c); }
           if((*c%20000)==0) fprintf(stderr,"[dvdsm] flagcheck 14168=%u 1416C=%u 14170=%u 1417C=%u 14180=%u\n", _f1,_f2,_f3,_f4,_f5); }
 
-        else if(pc==0x8001AF8Cu){ uint32_t v=g_cpu.gpr[30]; if(v==0) v=1; poke32_set(g_cpu.gpr[13]-31388u, v); }
+        // (was: 0x8001AF8C poke r13-31388=gpr30-or-1 — REMOVED fzEYzb50:
+        // 1AF7C loads r30=[r13-31388], 1AF8C loads r0=[same], 1AF90 exits
+        // iff r30!=r0. The poke wrote [word]=r30 every lap, forcing
+        // r30==r0 forever = INFINITE GAME-THREAD WAIT. The word is owned
+        // by the DVD completion path (who files it natively? TBD — but
+        // NOT us). Let the guest file it.)
         // GXRuntime VI retrace drive: 1 block dispatch = 1 work unit.
         // Retrace => +675000 timebase ticks + VI status bit asserted.
         // Interrupt delivery stays parked (s_os_dispatch_interrupt==0) so
