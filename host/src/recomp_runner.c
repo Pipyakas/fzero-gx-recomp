@@ -667,9 +667,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // fzEYzb10: 1776C (dispatched entry) encloses the 1A3F4 slot-chain
     // caller at 1780C. Fires => the registration chain runs at all.
+    // fzEYzb27: ALSO dump m56/m60 at entry: the A72C call chain
+    // (A728 bl 1776C gated on r13-31816==0; A72C reads r13-31852 which
+    // 17794 SET to 1) shows whether 1776C re-runs natively after the
+    // completion storm, and with what drive state.
     if(addr==0x8001776Cu){
-      static unsigned _n=0; if(++_n<=4) fprintf(stderr,"[dvdsm] 1776C r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
-        cpu->gpr[3], cpu->gpr[4], cpu->lr, _n);
+      static unsigned _n=0; if(++_n<=4){ uint32_t m56=0xDEADu,m60=0xDEADu;
+        guest_read32(cpu->gpr[13]-31456u,&m56); guest_read32(cpu->gpr[13]-31460u,&m60);
+        fprintf(stderr,"[dvdsm] 1776C r3=0x%08X r4=0x%08X m56=%u m60=%u lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], m56, m60, cpu->lr, _n); }
       return false; }
     // fzEYzb9: 16C94 (dispatched entry) encloses the native 16D50
     // flag-setter tail (flag-31592=1 + flag-31560=1). Fires => setter
