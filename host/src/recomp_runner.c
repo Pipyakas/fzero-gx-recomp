@@ -247,6 +247,19 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
     // layer (game thread at 1AF64/110A8 wait) never does — THAT is the
     // stall, not the DVD thread. REDIRECT: fix the game-thread wait
     // ([r13-31388] waker at 1A618, unreachable 1A5xx chain).
+    // fzEYzb54 (answered statically — 6FDEC decoded): the 6A64-called
+    // game path (6A64 bl 1AF64 = DVD-wait, then 6A68 r3=1 + 6A6C bl
+    // 1BDF0 + 6A74 bl 6FFCC + 6A78 bl 6FDEC + 6A7C bl 6FEFC...) runs
+    // the DVD-wait FIRST (6A64) and only continues past it when
+    // [r13-31388] changes. 6FDEC is the allocator/memcpy worker
+    // (7988C + 1140C-sync frames). So the GAME BOOT SEQUENCE is:
+    // 1AF64-wait (DVD) -> 1BDF0 -> 6FFCC -> 6FDEC (alloc) -> 6FEFC...
+    // It is parked at step 0. The waker (1A618 increment, called from
+    // the unreachable 1A5xx chain) never runs. NEXT: what calls 1A5xx?
+    // NOTHING (no bl found) — so the 1A5xx chain is entered via a
+    // FUNCTION POINTER (slot callback? 199xx bctr table? OS thread?).
+    // Grep for 1A5xx/1A6xx addresses taken as VALUES (lis/addi loads),
+    // not just bl targets.
     if((c0 & 0xFF000000u) == 0xE3000000u){
         { static int _n=0; if(_n<3){ fprintf(stderr,"[di] exec STOPMOTOR (complete)\n"); _n++; } }
         // fzCD: STOPMOTOR completion must ALSO mark block+12. The inquiry
