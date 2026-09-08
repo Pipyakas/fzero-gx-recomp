@@ -626,12 +626,25 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // ([r13-31480]+32 deref) + 177F0/177F8 compare run native; 177FC
     // (fallthrough toward 1A3F4) vs 17814 (taken) decide. Dump the
     // deref base + final r3 to see the selector value.
+    // fzEYzb29 (answered): p=[base+32]=0x0D15EA5E — the HARNESS's own
+    // POKE32(0x80000020) console-size value, because 177AC writes the
+    // constant 0x80000000 (lis r0,-32768) to base-31480, so p reads our
+    // [0x80000020]. v=[p] reads RAM at 0x0D15EA5E — unmapped, so the
+    // 177EC lwz faults (DSI) or returns 0; r0=(0+6880<<16)=0x1AE00000 vs
+    // 0x7C22 at 177F4 => NE => 177F8 branches to 17814 (dead side), so
+    // 177FC/1780C/1A3F4 slot registration NEVER runs. On hardware the
+    // base would be a DVD workarea pointer (filed by 16DC0/19E64), not a
+    // constant — but here the workarea write IS the constant by design
+    // (177A4/177AC write r0, not a computed pointer). NEXT fzEYzb30: what
+    // SHOULD base-31480 point at — i.e. read 17784's selector [r13-31424]
+    // (17794 sets it to 1; A360's 030CE halfword may gate entry at all).
     if(addr==0x800177D0u){
-      static unsigned _n=0; if(++_n<=4){ uint32_t b=0,v=0;
+      static unsigned _n=0; if(++_n<=6){ uint32_t b=0,p=0xDEADu,v=0xDEADu,w20=0xDEADu;
         guest_read32(cpu->gpr[13]-31480u,&b);
-        if(b){ uint32_t p=0; guest_read32(b+32u,&p); if(p) guest_read32(p,&v); }
-        fprintf(stderr,"[dvdsm] 177D0 base-31480=0x%08X deref=%08X lr=0x%08X (#%u)\n",
-          b, v, cpu->lr, _n); }
+        if(b){ guest_read32(b+32u,&p); if(p&&p>=0x80000000u) guest_read32(p,&v); }
+        guest_read32(0x80000020u,&w20);
+        fprintf(stderr,"[dvdsm] 177D0 base=0x%08X p=[base+32]=0x%08X v=[p]=0x%08X [0x80000020]=0x%08X lr=0x%08X (#%u)\n",
+          b, p, v, w20, cpu->lr, _n); }
       return false; }
     // fzEYzb13: 177C0/177C8 (post-call continuations). 177D0 has its
     // own deref-dump probe above; excluded here to avoid double-fire.
