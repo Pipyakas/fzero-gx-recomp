@@ -785,6 +785,34 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // 1->2->4 via the 199xx dispatcher — which needs the slot/tag-8
     // machinery that is cold. CONFIRMED END-TO-END: the DVD subsystem is
     // waiting on b12==4 and nothing can produce it from the cold state.
+    // fzEYzb45 (answered statically — 19B78/19B9C SUCCESS leg decoded):
+    // the 19934 jump-table row for tag==14 lands at 19B78 (r30=block):
+    // 19B98 bl 198FC (queue helper) -> 19B9C r3==0? (helper FAILED =>
+    // 19BA4 r3=-1, 19BA8 -> 19C0C FAIL-EXIT) : 19BAC bl D4F4-sync ->
+    // 19BB0 r31=[block+12]=b12 -> 19BB4 r3=b12 -> 19BB8 r0=b12+1 vs 1:
+    // b12==0 => 19C00 (SKIP the b12+1==12/==10/==3 ladders: b12=1 first
+    // INVALIDs r0==0? no: 19BC0 checks r0&... wait 19BB8 r0=r3+1=b12+1,
+    // 19BBC vs 1: b12+1==1 i.e. b12==0 => 19C00; else 19BC4 vs 10:
+    // b12+1==10 i.e. b12==9 => 19C00; else 19BCC vs 3: b12==3 =>
+    // 19BF4 (SKIP to 19BF4 filer: r3=r13-31496 + bl 110A8 + -> 19BB4
+    // RE-READ b12?? no: 19BF4 is BEFORE 19BB4 in layout... order:
+    // 19BB4->19BC0->19BC4->19BCC->19BD0->19BD4(tag)/19BDC(tag-1)/19BE4/
+    // 19BEC/19BF0 vs 13/15 gates -> 19BF4 filer (r13-31496 + bl 110A8
+    // QUEUE-WAIT?) -> 19BFC -> 19BB4 RE-LOOP reading FRESH b12).
+    // So the 19B78 leg is a POLL LOOP: re-read b12 until it changes.
+    // With b12 pinned at 1: 19BB8 r0=2 vs 1: NE -> 19BC4 r3=1 vs 10:
+    // NE -> 19BCC r3=1 vs 3: NE -> 19BD0 fallthrough -> 19BD4 reads
+    // [r30+8]=tag (14) -> 19BD8 tag-4 -> 19BDC vs 1: 10 vs 1: NE ->
+    // 19BE4 tag vs 13: NE -> 19BEC vs 15: NE -> 19BF0 vs 15: NE ->
+    // 19BF4 filer + bl 110A8 + 19BFC -> 19BB4 RE-READ. INFINITE POLL on
+    // b12==1/tag==14. The 19BF4 filer + 110A8 call is the queue-wait
+    // primitive — 110A8 writes [thread+712]=4 + [thread+732]=queue (see
+    // 110CC/110D8: waiter link!). The guest PARKS ITSELF on the queue
+    // waiting for b12 to change — and b12 changes ONLY via a completion
+    // that takes a different leg. STABLE PARK, not a spin: the thread
+    // sleeps until someone files b12. NEXT: who wakes it — the 110A8
+    // waiter chain (thread+732 queue link) and whether OUR completions
+    // ever link/unlink it.
     // fzEYzb34 (answered statically — 18CC8 decoded): the leg writes
     // NOTHING to the drive state — it copies [0xCC006014]+4 to the block,
     // sets [blk+28]=32, then 18CEC bl 16A38 re-issues INQUIRY (c0=0x12).
@@ -856,6 +884,48 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         guest_read32(0x800030CCu,&w);
         fprintf(stderr,"[dvdsm] 1776C r3=0x%08X r4=0x%08X m56=%u m60=%u curblk=0x%08X tag=%u flag30CC=0x%08X lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->gpr[4], m56, m60, cb, tag, w, cpu->lr, _m); }
+      return false; }
+    // fzEYzb46 (answered — 19934 table dumped from DOL: tag 14 row is
+    // 19CF0, NOT 19B78. 19CF0: r4=[0xCC006004] (DI cmd word mirror) bit0
+    // (rotl30 & 1, i.e. ORIGINAL bit30 = word's bit1?): set => 19D0C
+    // (19CF0 taken... verify direction: bc 4,2 = branch if CR0EQ clear?
+    // 19D00 TAKEN-side => 19D0C) : 19D04 bit31 check => 19D14/19D08.
+    // In all cases the row READS LIVE DI REGISTERS ([0xCC006004]) — the
+    // row is only as correct as our DI model. It then flows to 19D2C
+    // (r3 = 198FC-helper result?) etc. The tag-14 row NEVER touches b12
+    // or the poll loop — it re-examines the hardware command word!
+    // Who calls the 19934 dispatcher at all? NOBODY in the observed
+    // loop — 199xx never fires (no probes hit all session). The live
+    // loop is 189FC(tag14)->18CC8->16A38 only. So the 199xx lattice is
+    // for a LATER phase (post-inquiry command management) that boot
+    // never reaches.
+    // fzEYzb47 (answered statically — 17234 caller chain decoded): the
+    // ONLY in-DVD caller of the 199xx family is 17234 (bl 19B78), inside
+    // the 17160-frame: 17160 (r30=path?, r31=dst?) -> 1717C bl 16DF8
+    // (queue lookup by idx?) -> r3==0? no: 17184 loop over workarea
+    // entries (171B4 mulli*12 + 171BC/171C0 top-byte gate on entry+8) ->
+    // 171E4 builds block (48/52/56/12 filers) -> 17200 reads entry+8 ->
+    // 17234 bl 19B78 (SUBMIT the freshly built block to the post-inquiry
+    // manager!) -> 17238 r3=1 return. The 17160-frame is the
+    // READ-ISSUE builder (builds a block from a workarea entry and
+    // submits it) — called from 172CC/173DC via 1724C, which NOBODY
+    // calls either (no bl to 1724C/17160 found in DVD region). The two
+    // OTHER 19B78 callers (5584C/55F44) are in game code (80055xxx =
+    // boot/main thread!) — the UPPER LAYER calls 19B78 directly to
+    // submit reads! So the bridge EXISTS: game code -> 19B78 ->
+    // 198FC-helper -> queue. It never fires because the game thread
+    // never gets past the DVD-wait (it parks at 110A8/AD1C waiting for
+    // b12, or spins in the boot inquiry wait). The boot is stuck
+    // BELOW the game: the DVD thread spins INQUIRY while the game
+    // thread waits for a READ that nobody issues. NEXT: find what the
+    // game thread is doing — the 12974/10740/1BD10 frontier + the AD1C
+    // park (heap allocator, not DVD): is the game waiting on the DVD
+    // queue (110A8 waiter link) or parked elsewhere?
+    if(addr==0x80019CF0u){
+      static unsigned _n=0; if(++_n<=4){ uint32_t c4=0xDEADu;
+        guest_read32(0xCC006004u,&c4);
+        fprintf(stderr,"[dvdsm] 19CF0-tag14row DICMD1=0x%08X r30=0x%08X lr=0x%08X (#%u)\n",
+          c4, cpu->gpr[30], cpu->lr, _n); }
       return false; }
     // fzEYzb9: 16C94 (dispatched entry) encloses the native 16D50
     // flag-setter tail (flag-31592=1 + flag-31560=1). Fires => setter
