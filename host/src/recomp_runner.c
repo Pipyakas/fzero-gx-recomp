@@ -250,6 +250,16 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
         // 18D1C for motor completions bypasses the 17958->1799C(m64=1)->
         // 187CC-sink chain that advances the drive state (m60 stuck at 14
         // => 1920C files b12=-1 and re-issues STOPMOTOR forever).
+        // fzEYzb49 (answered live — slot seeded, loop UNCHANGED: still
+        // 800+ INQUIRY issues/20s, 7 completions, m60=14, b12=1. The
+        // seeded slot is never invoked: 179BC reads m56==0 -> 179C4 TAKEN
+        // to 179EC drain BEFORE any slot read; and the 18D1C body's own
+        // 18E04 slot gate reads [r30+40]... r30 at that point is curblk
+        // (0x8015BF20, seeded) — but 18E00 checks [r12]==0 first (slot
+        // word's... no: 18DFC r12=[r30+40]=seeded 18D1C !=0 -> 18E04
+        // TAKEN to 18E18, SKIPPING the 18E08 blrl invoke! The seed makes
+        // the body SKIP the invoke, not take it. Either way: unchanged.
+        // REVERTED to unseeded.)
         { uint32_t blk=0x8015BF20u; guest_read32(cmd->cpu->gpr[13]-31488u, &blk);
           if(blk < GC_RAM_BASE) blk = 0x8015BF20u;
           uint32_t cb=0x80017958u; guest_read32(cmd->cpu->gpr[13]-31584u, &cb);
