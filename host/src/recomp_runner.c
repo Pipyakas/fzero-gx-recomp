@@ -671,12 +671,22 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // (A728 bl 1776C gated on r13-31816==0; A72C reads r13-31852 which
     // 17794 SET to 1) shows whether 1776C re-runs natively after the
     // completion storm, and with what drive state.
+    // fzEYzb28: 19FA4 is the drain scanner (bl-target of 187E4, NOT a slice
+    // entry — it fires once per drain, 7x like the completions). Dump its r3
+    // (scan result: block ptr or 0) + m64 + curblk: ret 0 => 187E8 sees
+    // 187F0 early-out (curblk=0); ret nonzero => 187FC continue. Which?
+    if(addr==0x80019FA4u){
+      static unsigned _n=0; if(++_n<=8){ uint32_t m64=0xDEADu,cb=0;
+        guest_read32(cpu->gpr[13]-31464u,&m64); guest_read32(cpu->gpr[13]-31488u,&cb);
+        fprintf(stderr,"[dvdsm] 19FA4-scan r3=0x%08X m64=%u curblk=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], m64, cb, cpu->lr, _n); }
+      return false; }
     if(addr==0x8001776Cu){
-      static unsigned _n=0; if(++_n<=6){ uint32_t m56=0xDEADu,m60=0xDEADu,cb=0,tag=0xDEADu;
+      static unsigned _m=0; if(++_m<=6){ uint32_t m56=0xDEADu,m60=0xDEADu,cb=0,tag=0xDEADu;
         guest_read32(cpu->gpr[13]-31456u,&m56); guest_read32(cpu->gpr[13]-31460u,&m60);
         guest_read32(cpu->gpr[13]-31488u,&cb); if(cb) guest_read32(cb+8u,&tag);
         fprintf(stderr,"[dvdsm] 1776C r3=0x%08X r4=0x%08X m56=%u m60=%u curblk=0x%08X tag=%u lr=0x%08X (#%u)\n",
-          cpu->gpr[3], cpu->gpr[4], m56, m60, cb, tag, cpu->lr, _n); }
+          cpu->gpr[3], cpu->gpr[4], m56, m60, cb, tag, cpu->lr, _m); }
       return false; }
     // fzEYzb9: 16C94 (dispatched entry) encloses the native 16D50
     // flag-setter tail (flag-31592=1 + flag-31560=1). Fires => setter
