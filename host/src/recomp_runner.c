@@ -106,6 +106,9 @@ static u16 s_dsp_control = 0x0004u;
 static bool s_dsp_aram_irq = false;
 static bool s_dsp_mail_ready = false;
 static u16 s_dsp_mail_to_hi = 0u, s_dsp_mail_to_lo = 0u;
+// Level-triggered PI DSP source = ARAM-IRQ latch OR AID-engine pending.
+// Forward declaration: DSP write handlers call it before its definition.
+static void chassis_sync_dsp_irq(void);
 static int s_chassis_inited = 0;
 static int s_disc_present_logged = 0;
 static uint64_t s_ext_deliveries = 0; // external-interrupt deliveries to guest
@@ -238,12 +241,12 @@ static bool chassis_dsp_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 va
               { static unsigned _n=0; if(++_n<=4)
                   fprintf(stderr,"[dsp] ARAM-DMA dir=%u n=%u (PI DSP asserted)\n", dir?1u:0u, n); } }
             // CompleteARAM: DMAState=0 + INT_ARAM. Mailbox also latches
-            // ready (B4D4 gate). PI DSP asserted with the ARAM-IRQ latch;
-            // the read side merges pending sources; the guest acks via
-            // CONTROL write-1-to-clear below.
+            // ready (B4D4 gate). LEVEL-TRIGGERED: the source stays pending
+            // until the guest acks CONTROL (write-1-to-clear below) — never
+            // de-assert here. Recompute from the latches like the read side.
             s_dsp_mail_ready = true;
             s_dsp_aram_irq = true;
-            dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DSP, true);
+            chassis_sync_dsp_irq();
             return true;
         }
         // CONTROL write (Dolphin DSP.cpp write handler): DSPReset
@@ -259,8 +262,7 @@ static bool chassis_dsp_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 va
                                   (v & 0x0C04u));
             s_dsp_control &= (u16)~0x0001u; // DSPReset self-clears
             s_dsp_control &= (u16)~0x0400u; // InitCode reads clear
-            { bool pend = s_dsp_aram_irq || dol_audio_dma_dsp_interrupt_pending(&s_audio_dma);
-              dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DSP, pend); }
+            chassis_sync_dsp_irq();
             return true;
         }
         // MAIL_TO write just latches (TO and FROM are separate
@@ -274,17 +276,23 @@ static bool chassis_dsp_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 va
             return true;
         }
         dol_audio_dma_dsp_mmio_write(&s_audio_dma, ea - 0xCC005000u, size, value);
-        { bool pend = s_dsp_aram_irq || dol_audio_dma_dsp_interrupt_pending(&s_audio_dma);
-          dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DSP, pend); }
+        chassis_sync_dsp_irq();
         (void)cpu;
         return true;
     }
     if(ea >= 0xCC006C00u && ea < 0xCC006C20u){
         dol_audio_dma_ai_mmio_write(&s_audio_dma, ea - 0xCC006C00u, size, value);
+        chassis_sync_dsp_irq();
         (void)cpu;
         return true;
     }
     return false;
+}
+// Recompute the level-triggered PI DSP source from the latches (defined
+// after the DSP handlers that call it; declared above chassis_di_write).
+static void chassis_sync_dsp_irq(void){
+    bool pend = s_dsp_aram_irq || dol_audio_dma_dsp_interrupt_pending(&s_audio_dma);
+    dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DSP, pend);
 }
 // ARAM window (synthetic CPU-addressable base) + EXI (RTC/card on
 // channels 0/1): production models, same as Strikers mmio_install.
@@ -760,6 +768,12 @@ static void hle_fallback(CPUState* cpu, uint32_t raw, uint32_t cia){
         if(xo==339){ uint32_t rt=(raw>>21)&31u; uint32_t spr=((raw>>11)&0x1Fu)<<5|((raw>>16)&0x1Fu); uint32_t before=cpu->exception; uint32_t v=ppc_mfspr(cpu,(uint16_t)spr,cia); if(cpu->exception==before){ cpu->gpr[rt]=v; cpu->pc=cia+4; return; } return; }
         if(xo==467){ uint32_t rs=(raw>>21)&31u; uint32_t spr=((raw>>11)&0x1Fu)<<5|((raw>>16)&0x1Fu); uint32_t before=cpu->exception; ppc_mtspr(cpu,(uint16_t)spr,cpu->gpr[rs],cia); if(cpu->exception==before){ cpu->pc=cia+4; return; } return; }
         if(xo==83){ uint32_t rt=(raw>>21)&31u; cpu->gpr[rt]=cpu->msr; cpu->pc=cia+4; return; }
+        // mtmsr: PLAN-sanctioned MSR.FP forcing (matches Strikers host).
+        // fzEYzb61: full passthrough was tried (guest owns MSR) — it
+        // produced an FP_UNAVAILABLE storm at 70A58 every game-loop lap
+        // (guest FP-off windows via 9FC4 never re-enable per-thread, so
+        // each reschedule faults again). Forcing FP is harmless: the
+        // FP-off windows are L2/cache-config stretches that use no FP.
         if(xo==146){ uint32_t rs=(raw>>21)&31u; cpu->msr=(cpu->gpr[rs]|0x2000u); cpu->pc=cia+4; return; }
         if(xo==210||xo==242||xo==595||xo==659){ uint32_t rt=(raw>>21)&31u; if(xo==595||xo==659) cpu->gpr[rt]=0; cpu->pc=cia+4; return; }
         if(xo==306){ uint32_t rb=(raw>>11)&31u; ppc_tlbie(cpu,cpu->gpr[rb],cia); if(cpu->exception==0) cpu->pc=cia+4; return; }
@@ -1301,6 +1315,28 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           s_watch_off[0], s_watch_off[1], s_watch_off[2], cpu->gpr[13]);
       }
       return false; }
+    // fzEYzb59: 14158 is the DISPATCHED entry of the 14158-1416C leg
+    // (14170 itself is a mid-chain native). Probe here: dump r4 (the
+    // queue-walk cursor), [r4] (block word), and the 030CE halfword +
+    // waiter flag. If 14158 never fires either, the whole 13F64 walk
+    // never reaches the flag-check leg (spins at 13F9C/1418C instead).
+    if(addr==0x80014158u){
+      static unsigned _f=0; if(++_f<=4){ uint32_t bw=0xDEADu, w=0xDEADu, fl=0xDEADu;
+        uint32_t r4=cpu->gpr[4]; if(r4) guest_read32(r4,&bw);
+        guest_read32(0x800030CCu,&w); guest_read32(cpu->gpr[13]-31592u,&fl);
+        fprintf(stderr,"[dvdsm] 14158 r4=0x%08X [r4]=0x%08X halfCE=0x%04X waitflag=%u lr=0x%08X (#%u)\n",
+          r4, bw, (w>>16)&0xFFFFu, fl, cpu->lr, _f); }
+      return false; }
+    // fzEYzb60: 7096C gate2-consumer entry (dispatched? has downcount).
+    // Dumps the gate2 POINTER + target word + byte25 (the strcmp key?).
+    // Fires => game thread reached the gate2 stage (past 1AF64 wait).
+    if(addr==0x8007096Cu){
+      static unsigned _g=0; if(++_g<=4){ uint32_t p=0xDEADu, v=0xDEADu;
+        guest_read32(cpu->gpr[13]-30412u,&p);
+        if(p>=GC_RAM_BASE) guest_read32(p,&v);
+        fprintf(stderr,"[dvdsm] 7096C gate2ptr=0x%08X [ptr]=0x%08X lr=0x%08X (#%u)\n",
+          p, v, cpu->lr, _g); }
+      return false; }
     // fzEYzb9: 16C94 (dispatched entry) encloses the native 16D50
     // flag-setter tail (flag-31592=1 + flag-31560=1). Fires => setter
     // runs; dump the flag to confirm it lands.
@@ -1752,21 +1788,22 @@ void recomp_run_slice(void){
     // identical runs diverge by host speed. Removed per PLAN M0.
     (void)0;
     for(int i=0;i<16384;i++){
-
         if(g_cpu.exception){
             uint32_t vec=g_cpu.pc;
             if(vec!=s_last_exc_pc || g_cpu.exception!=s_last_exc){
                 fprintf(stderr,"[hle] exc 0x%X prog 0x%X msr=0x%08X hid2=0x%08X srr0 0x%08X srr1 0x%08X -> vec 0x%08X r1=0x%08X\n", g_cpu.exception, g_cpu.program_exception, g_cpu.msr, g_cpu.hid2, g_cpu.srr0, g_cpu.srr1, vec, g_cpu.gpr[1]);
                 s_last_exc_pc=vec; s_last_exc=g_cpu.exception;
             }
-            if(g_cpu.exception & PPC_EXC_FP_UNAVAILABLE){ g_cpu.msr|=0x2000u; g_cpu.srr1|=0x2000u; g_cpu.pc=g_cpu.srr0; g_cpu.exception=0; continue; }
-            if(vec>=0x200 && vec<0xD00){ ppc_rfi(&g_cpu, vec); g_cpu.msr|=0x2000u; g_cpu.exception=0; continue; }
+            if(g_cpu.exception & PPC_EXC_FP_UNAVAILABLE){ g_cpu.msr|=0x2000u; g_cpu.srr1|=0x2000u; g_cpu.pc=g_cpu.srr0; g_cpu.exception=0; g_cpu.program_exception=0; continue; }
+            // System-call vector (0xC00): guest `sc` is the SDK cache-sync
+            // barrier epilogue (dcbf-loop + sc + blr). The slice loop
+            // emulates cia+4 directly; the FP fault above handles 0x800.
+            // Other vectors (DSI/program/etc.) rfi per Strikers host.
+            if(vec==0xC00u){ g_cpu.pc=g_cpu.srr0; g_cpu.exception=0; g_cpu.program_exception=0; continue; }
+            if(vec>=0x200 && vec<0xD00){ ppc_rfi(&g_cpu, vec); g_cpu.exception=0; g_cpu.program_exception=0; continue; }
             if(g_cpu.exception & PPC_EXC_PROGRAM){ g_cpu.exception=0; break; }
             g_cpu.exception=0; break;
         }
-        g_cpu.msr|=0x2000u; g_cpu.srr1|=0x2000u;
-        g_cpu.msr|=0x2000u;
-        g_cpu.srr1|=0x2000u;
         uint32_t pc=g_cpu.pc;
         if(g_cpu.gpr[1]==0) g_cpu.gpr[1]=0x817FFF00u;
         if(pc==0 || (pc>=0x80000000u && pc<0x80003100u)){
@@ -1777,7 +1814,8 @@ void recomp_run_slice(void){
         if(g_cpu.downcount < -800) g_cpu.downcount += 1000;
         if(pc==s_last_pc) s_same++; else {s_last_pc=pc; s_same=0;}
         if(false && s_same>256){ if(g_cpu.ctr>0) g_cpu.ctr--; g_cpu.pc+=4; s_same=0; continue; }
-        if(pc>=0x200 && pc<0xD00){ ppc_rfi(&g_cpu, pc); g_cpu.msr|=0x2000u; g_cpu.exception=0; continue; }
+        if(pc==0xC00u){ g_cpu.pc=g_cpu.srr0; g_cpu.exception=0; g_cpu.program_exception=0; continue; }
+        if(pc>=0x200 && pc<0xD00){ ppc_rfi(&g_cpu, pc); g_cpu.exception=0; g_cpu.program_exception=0; continue; }
         if((pc==0x8000B670u || pc==0x8000B750u || pc==0x8000B7C4u) && g_cpu.ctr>4) g_cpu.ctr=1;
         else if(pc==0x80010608u && g_cpu.gpr[6]==0) g_cpu.gpr[6]=1;
         if(pc==0x800113B8u && g_cpu.ctr>8) g_cpu.ctr=1;
@@ -2198,6 +2236,14 @@ void recomp_run_slice(void){
                 dol_si_latch_poll(&s_si, 0xFu);
                 dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_SI, dol_si_interrupt_pending(&s_si));
             }
+            // AID audio-DMA cadence runs on guest-work units (Strikers:
+            // audio_poll per block). No audio output here — but the
+            // ENGINE state (chunks consumed, completion interrupt) is
+            // guest-visible via DSP CONTROL/AID, so poll it per dispatch.
+            // Silent while idle (control ENABLE clear): poll early-returns
+            // on a counter increment until a chunk is due.
+            { u32 src = 0;
+              if(dol_audio_dma_poll(&s_audio_dma, &src)) chassis_sync_dsp_irq(); }
             chassis_deliver_external();
         }
         // HLE async-callback trampoline: if a queued guest callback (e.g.
