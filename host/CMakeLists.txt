@@ -117,6 +117,11 @@ add_executable(fzero-gx WIN32
     src/main_host.c
 )
 target_link_libraries(fzero-gx PRIVATE fzero_host_shims recomp_core)
+# Headless probe runner: fixed-slice console run for log capture.
+add_executable(fzero-probe
+    src/probe_main.c
+)
+target_link_libraries(fzero-probe PRIVATE fzero_host_shims recomp_core)
 if(WIN32)
   target_compile_definitions(fzero-gx PRIVATE _WIN32 HOST_BUILD=1)
 endif()

@@ -44,6 +44,8 @@ static u64 g_tb = 0;
 // the 179DC clear leg executes).
 static u32 s_watch_off[6] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
 static const char* s_watch_nm[6] = {"gate2word", "waitword31388", "curblk31488", "fnptr31372", "m52drv", "m56drv"};
+static unsigned s_watch_tot[6] = {0,0,0,0,0,0};
+static unsigned s_watch_nz[6] = {0,0,0,0,0,0};
 static void watch_journal(u32 offset, u32 size, void* user){
     (void)user; (void)size;
     for(int i=0;i<6;i++)
@@ -53,9 +55,15 @@ static void watch_journal(u32 offset, u32 size, void* user){
                 uint8_t* p = g_cpu.ram + (a - GC_RAM_BASE);
                 v = ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
             }
-            { static unsigned _n=0; if(++_n<=24)
-                fprintf(stderr,"[watchmem] %s write off=0x%X sz=%u now=0x%08X pc=0x%08X lr=0x%08X\n",
-                    s_watch_nm[i], offset, size, v, g_cpu.pc, g_cpu.lr); }
+            // fzEYzb70: per-slot counters. The old single shared cap (24)
+            // was exhausted by boot memset spam, hiding any later waker
+            // write. First 8 + every 50k + every nonzero (64/slot cap).
+            s_watch_tot[i]++;
+            if(s_watch_tot[i]<=8 || s_watch_tot[i]%50000==0 ||
+               (v!=0 && v!=0xDEADu && s_watch_nz[i]<64)){
+                if(v!=0 && v!=0xDEADu) s_watch_nz[i]++;
+                fprintf(stderr,"[watchmem] %s write off=0x%X sz=%u now=0x%08X pc=0x%08X lr=0x%08X (tot=%u)\n",
+                    s_watch_nm[i], offset, size, v, g_cpu.pc, g_cpu.lr, s_watch_tot[i]); }
         }
 }
 static uint64_t s_mmio_reads=0, s_mmio_writes=0;
@@ -1519,6 +1527,36 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _n=0; if(++_n<=4) fprintf(stderr,"[dvdsm] 19500 slot-reg r3=0x%08X r5=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->gpr[5], cpu->lr, _n);
       return false; }
+    // fzEYzb68: 1A55C entry (dispatched, has downcount) is the ONLY caller
+    // of the 1A5xx waker chain (1A55C->...->1A5FC-taken->1A618 increment ->
+    // 1A628 fnptr invoke). 1A55C takes r3=video-mode-ish + r4 (r30=copy).
+    // lr names the caller; r7 bit3 (from the VI field-status polls) decides
+    // 1A5F8->1A5FC vs 1A600. Fires => waker chain entered; never => dead.
+    if(addr==0x8001A55Cu){
+      static unsigned _n=0; if(++_n<=6) fprintf(stderr,"[dvdsm] 1A55C-waker-entry r3=0x%08X r4=0x%08X r7pending lr=0x%08X (#%u)\n",
+        cpu->gpr[3], cpu->gpr[4], cpu->lr, _n);
+      return false; }
+    // fzEYzb68b: 1A618 (dispatched, has downcount) is the wait-word
+    // INCREMENTER (stw [r13-31388]+1). Fires => the 1A5FC gate took the
+    // taken leg => 1A628 runs natively next (same frame). Dump word+r7.
+    if(addr==0x8001A618u){
+      static unsigned _n=0; if(++_n<=6){ uint32_t w=0xDEADu;
+        guest_read32(cpu->gpr[13]-31388u,&w);
+        fprintf(stderr,"[dvdsm] 1A618-waker-fire waitword=%u r7=0x%08X lr=0x%08X (#%u)\n",
+          w, cpu->gpr[7], cpu->lr, _n); }
+      return false; }
+    // fzEYzb69: DVD READ-chain entries (all dispatched, downcount>0):
+    // 16DF8=DVDConvertPathToEntrynum, 1687C=ReadDiskID, 19354=tag1-enqueue,
+    // 19430=tag4-enqueue (the READ enqueue: li r0,4 + stw r0,8(r3)),
+    // 16394=DVDLowRead (0xA8 builder). lr names the caller at each stage.
+    // ANY fire here = the file path is live (FST resolved, read enqueued).
+    if(addr==0x80016DF8u||addr==0x8001687Cu||addr==0x80019354u||addr==0x80019430u||addr==0x80016394u){
+      static unsigned _d1=0,_d2=0,_d3=0,_d4=0,_d5=0;
+      unsigned *c=addr==0x80016DF8u?&_d1:addr==0x8001687Cu?&_d2:addr==0x80019354u?&_d3:addr==0x80019430u?&_d4:&_d5; (*c)++;
+      if(*c<=4) fprintf(stderr,"[dvdsm] %s r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x80016DF8u?"16DF8-path2entry":addr==0x8001687Cu?"1687C-diskid":addr==0x80019354u?"19354-tag1":addr==0x80019430u?"19430-tag4-READ":"16394-DVDLowRead",
+        cpu->gpr[3], cpu->gpr[4], cpu->lr, *c);
+      return false; }
     // fzEYy probe removed: 18DD8/18E08 never fire (mid-chain natives).
     // fzEYx/fzEYzb3/fzEYv probes removed: 18E34 et al / 18F04 et al /
     // 19240 et al never fire (mid-chain natives in 18D1C frame).
@@ -1739,8 +1777,13 @@ static int load_dol(const char* path, CPUState* cpu) {
         arena_lo = (bss_addr + bss_size + 0x20000u + 31u) & ~31u;
         if(arena_lo < GC_RAM_BASE || arena_lo > 0x817FEC60u) arena_lo = bss_addr ? bss_addr : GC_RAM_BASE;
         POKE32(0x80000020u, 0x0D15EA5Eu); POKE32(0x80000024u, 1u); POKE32(0x80000028u, 0x01800000u);
-        POKE32(0x8000002Cu, 1u); POKE32(0x80000030u, arena_lo); POKE32(0x80000034u, 0x817FEC60u);
+        // fzEYzb67: console type matches Dolphin Boot_BS2Emu.cpp:260
+        // (LatestDevkit 0x10000006, not retail 3/1 — retail IDs take
+        // different EXI paths in some titles).
+        POKE32(0x8000002Cu, 0x10000006u); POKE32(0x80000030u, arena_lo); POKE32(0x80000034u, 0x817FEC60u);
         POKE32(0x80000038u, 0u); POKE32(0x8000003Cu, 0u); POKE32(0x800000CCu, 0u);
+        // fzEYzb67: ARAM size 16MB, Dolphin Boot_BS2Emu.cpp SetupGCMemory-exact.
+        POKE32(0x800000D0u, 0x01000000u);
         // NOTE: 0x800000D4 is owned by the guest OS (OSContext pointer set by
         // __OSInit / OSInitThreadQueue). Do NOT pre-seed it: 102AC reads this
         // word and the boot PSL would diverge from hardware.
