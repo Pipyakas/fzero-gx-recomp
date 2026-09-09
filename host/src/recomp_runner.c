@@ -1520,6 +1520,41 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _c=0; if(++_c<=4) fprintf(stderr,"[dvdsm] A360 r3=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->lr, _c);
       return false; }
+    // fzEYzb72: D9CC = __OSDispatchInterrupt entry (dispatched, downcount).
+    // Deliveries redirect pc here; if it never fires, delivered interrupts
+    // never enter the guest dispatcher. r3=exception code (4=external),
+    // r4=context pointer.
+    if(addr==0x8000D9CCu){
+      static unsigned _n=0; if(++_n<=8) fprintf(stderr,"[dvdsm] D9CC-dispatch r3=%u r4=0x%08X msr=0x%08X lr=0x%08X (#%u)\n",
+        cpu->gpr[3], cpu->gpr[4], cpu->msr, cpu->lr, _n);
+      return false; }
+    // fzEYzb72b: 1B42C entry (dispatched) = the 706E4 file-load waiter that
+    // must return for the 706EC done-flag store to run. lr names caller.
+    if(addr==0x8001B42Cu){
+      static unsigned _n=0; if(++_n<=4){ uint32_t w=0xDEADu;
+        if(cpu->gpr[3]) guest_read32(cpu->gpr[3],&w);
+        fprintf(stderr,"[dvdsm] 1B42C-entry r3=0x%08X [r3]=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], w, cpu->gpr[4], cpu->lr, _n); }
+      return false; }
+    // fzEYzb73: 1B42C RETURN continuations — r3 holds 1B42C's return value.
+    // 706E8 follows the 706E4 call (setter path -> done-flag store next);
+    // 70A1C follows the 70A18 call (game path -> 1BD84/1BC54/1AF64 next).
+    // Return 0/failure vs nonzero/success tells whether the file op worked.
+    if(addr==0x800706E8u||addr==0x80070A1Cu){
+      static unsigned _m1=0,_m2=0; unsigned *c=addr==0x800706E8u?&_m1:&_m2; (*c)++;
+      if(*c<=4){ uint32_t w=0xDEADu; guest_read32(0x8019E150u,&w);
+        fprintf(stderr,"[dvdsm] %s 1B42C-ret r3=0x%08X r4=0x%08X gate2=[0x8019E150]=0x%08X (#%u)\n",
+          addr==0x800706E8u?"706E8":"70A1C", cpu->gpr[3], cpu->gpr[4], w, *c); }
+      return false; }
+    // fzEYzb73b: live file-op entries on the game path (all dispatched):
+    // 1AFB8 (fires, lr=1BDD0), 1BD84, 1BC54, 1BDF0. Dump args + lr.
+    if(addr==0x8001AFB8u||addr==0x8001BD84u||addr==0x8001BC54u||addr==0x8001BDF0u){
+      static unsigned _f1=0,_f2=0,_f3=0,_f4=0;
+      unsigned *c=addr==0x8001AFB8u?&_f1:addr==0x8001BD84u?&_f2:addr==0x8001BC54u?&_f3:&_f4; (*c)++;
+      if(*c<=4) fprintf(stderr,"[dvdsm] %s r3=0x%08X r4=0x%08X r5=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x8001AFB8u?"1AFB8":addr==0x8001BD84u?"1BD84":addr==0x8001BC54u?"1BC54":"1BDF0",
+        cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->lr, *c);
+      return false; }
     // fzEYz: 19500 (dispatched entry) files block+40 (slot) at 19538.
     // If it never fires, no slot is ever registered and 18E04 always
     // skips the invoke — the completion can never call back up.
@@ -1533,8 +1568,39 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // lr names the caller; r7 bit3 (from the VI field-status polls) decides
     // 1A5F8->1A5FC vs 1A600. Fires => waker chain entered; never => dead.
     if(addr==0x8001A55Cu){
-      static unsigned _n=0; if(++_n<=6) fprintf(stderr,"[dvdsm] 1A55C-waker-entry r3=0x%08X r4=0x%08X r7pending lr=0x%08X (#%u)\n",
-        cpu->gpr[3], cpu->gpr[4], cpu->lr, _n);
+      // fzEYzb76: dump r13 + waitword: 1A618's stw is r13-relative; if r13
+      // here differs from the waiter's r13 the wake lands elsewhere.
+      // fzEYzb77: ALSO dump the VI halfwords the frame polls (DI0 @0x30,
+      // +0x34/+0x38/+0x3C): the 1A588/1A5A4/1A5C0/1A5DC polls test bit15
+      // (0x8000) of each; set-bit => r7 ori => gate takes the 1A600
+      // no-wake side. Our model may leave guest-written config bits stuck.
+      static unsigned _n=0; if(++_n<=6){ uint32_t w=0xDEADu;
+        guest_read32(cpu->gpr[13]-31388u,&w);
+        u64 v30=0,v34=0,v38=0,v3c=0;
+        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002030u, 2u, &v30);
+        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002034u, 2u, &v34);
+        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002038u, 2u, &v38);
+        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC00203Cu, 2u, &v3c);
+        fprintf(stderr,"[dvdsm] 1A55C-waker-entry r3=0x%08X r4=0x%08X r13=0x%08X waitword=%u VI30=%04X VI34=%04X VI38=%04X VI3C=%04X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], cpu->gpr[13], w,
+          (unsigned)v30&0xFFFFu, (unsigned)v34&0xFFFFu,
+          (unsigned)v38&0xFFFFu, (unsigned)v3c&0xFFFFu, cpu->lr, _n); }
+      return false; }
+    // fzEYzb75: 1A5F0/1A5F8/1A5F4/1A5FC/1A600/1A60C gate resolution.
+    // 1A5F0 (downcount): reads r7 bit2 — first-6 dump r7+sides.
+    // 1A5F8 (downcount): reads r7 bit3. 1A5F4/1A5FC (native bc) never
+    // dispatch; 1A600/1A60C (downcount) are the taken/fallthrough
+    // continuations: 1A600 fires = no-wake side, 1A60C fires = waker
+    // side => 1A618 increment runs natively a few insns later. Log
+    // continuations uncapped (they ARE the gate outcome).
+    if(addr==0x8001A5F0u||addr==0x8001A5F8u||addr==0x8001A600u||addr==0x8001A60Cu){
+      static unsigned _g1=0,_g2=0,_g3=0,_g4=0;
+      unsigned *c=addr==0x8001A5F0u?&_g1:addr==0x8001A5F8u?&_g2:addr==0x8001A600u?&_g3:&_g4; (*c)++;
+      if(*c<=6||addr==0x8001A600u||addr==0x8001A60Cu){
+        if(*c<=200||addr==0x8001A600u||addr==0x8001A60Cu)
+          fprintf(stderr,"[dvdsm] %s r7=0x%08X lr=0x%08X (#%u)\n",
+            addr==0x8001A5F0u?"1A5F0-bit2":addr==0x8001A5F8u?"1A5F8-bit3":addr==0x8001A600u?"1A600-NOWAKE":"1A60C-WAKE",
+            cpu->gpr[7], cpu->lr, *c); }
       return false; }
     // fzEYzb68b: 1A618 (dispatched, has downcount) is the wait-word
     // INCREMENTER (stw [r13-31388]+1). Fires => the 1A5FC gate took the
@@ -2342,6 +2408,13 @@ void recomp_run_slice(void){
               if(dol_audio_dma_poll(&s_audio_dma, &src)) chassis_sync_dsp_irq(); }
             chassis_deliver_external();
         }
+        // fzEYzb74: delivered interrupts redirect g_cpu.pc (to D9CC), but the
+        // local `pc` was captured BEFORE delivery — the slice tail then called
+        // dolrecomp_call(stale pc), which resets ctx->pc first thing, silently
+        // dropping every delivered interrupt (4 deliveries, 0 D9CC runs all
+        // session). Refresh + re-run the iteration top for the new pc.
+        // Terminates: delivery clears MSR[EE], so no immediate re-delivery.
+        if(g_cpu.pc != pc){ pc = g_cpu.pc; continue; }
         // HLE async-callback trampoline: if a queued guest callback (e.g.
         // the DI inquiry completion at 0x80018D1C) is pending, run it with
         // saved context; it returns through HLE_CALLBACK_RETURN.
