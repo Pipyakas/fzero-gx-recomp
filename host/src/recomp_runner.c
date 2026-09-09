@@ -50,10 +50,21 @@ static const char* s_watch_nm[7] = {"gate2word", "waitword31388", "curblk31488",
 static unsigned s_watch_tot[7] = {0,0,0,0,0,0,0};
 static unsigned s_watch_nz[7] = {0,0,0,0,0,0,0};
 static void watch_journal(u32 offset, u32 size, void* user){
-    (void)user; (void)size;
+    (void)size;
+    // fzEYzb86: report the VALUE WRITTEN, not the post-write word image.
+    // The old code read the 4-byte word back AFTER the store landed, so a
+    // memset burst (stw r7,4(r4) word-fills) reported the fill pattern's
+    // residue (now=1) instead of the actual stored value (0). Reconstruct
+    // it: for a fully-covered 4-byte slot the written value is exactly the
+    // journal payload — but the hook only passes (offset,size), so read the
+    // word and mask to the written bytes: partial (1-2B) stores only
+    // change their bytes; the REST is stale image, not written data.
+    // Fully-covered 4B stores report the word as-is (exact). Anything else
+    // reports the covered bytes + a '%' suffix meaning "rest is image".
     for(int i=0;i<7;i++)
         if(s_watch_off[i]!=0xFFFFFFFFu && offset < s_watch_off[i]+4u && s_watch_off[i] < offset+size){
             uint32_t a = GC_RAM_BASE + s_watch_off[i], v = 0xDEADu;
+            int exact = (offset<=s_watch_off[i] && s_watch_off[i]+4u<=offset+size);
             if(a >= GC_RAM_BASE && a + 4 <= GC_RAM_BASE + g_cpu.ram_size){
                 uint8_t* p = g_cpu.ram + (a - GC_RAM_BASE);
                 v = ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
@@ -65,9 +76,11 @@ static void watch_journal(u32 offset, u32 size, void* user){
             if(s_watch_tot[i]<=8 || s_watch_tot[i]%50000==0 ||
                (v!=0 && v!=0xDEADu && s_watch_nz[i]<64)){
                 if(v!=0 && v!=0xDEADu) s_watch_nz[i]++;
-                fprintf(stderr,"[watchmem] %s write off=0x%X sz=%u now=0x%08X pc=0x%08X lr=0x%08X (tot=%u)\n",
-                    s_watch_nm[i], offset, size, v, g_cpu.pc, g_cpu.lr, s_watch_tot[i]); }
+                fprintf(stderr,"[watchmem] %s write off=0x%X sz=%u now=0x%08X%s pc=0x%08X lr=0x%08X (tot=%u)\n",
+                    s_watch_nm[i], offset, size, v, exact?"":"%",
+                    g_cpu.pc, g_cpu.lr, s_watch_tot[i]); }
         }
+    (void)user;
 }
 static uint64_t s_mmio_reads=0, s_mmio_writes=0;
 static uint32_t s_last_exc_pc=0, s_last_exc=0;
