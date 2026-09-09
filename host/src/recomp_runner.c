@@ -71,11 +71,19 @@ static void watch_journal(u32 offset, u32 size, void* user){
             }
             // fzEYzb70: per-slot counters. The old single shared cap (24)
             // was exhausted by boot memset spam, hiding any later waker
-            // write. First 8 + every 50k + every nonzero (64/slot cap).
+            // write. First 8 + every 50k + every nonzero.
+            // fzEYzb89 (restored — the fzEYzb86 rewrite clobbered it): the
+            // waitword slot logs EVERY nonzero write UNCAPPED, pc included.
+            // The 1A618 waker stores 1,2,3... rarely; memset residue (also
+            // nonzero: 0x00000001) already burned any finite cap in every
+            // run, hiding real waker stores. pc=1A618 (waker) vs pc=34E4
+            // (memset) disambiguates. Volume is tiny (dozens/run).
             s_watch_tot[i]++;
+            int _is_nz = (v!=0 && v!=0xDEADu);
+            int _uncap = (i==1 && _is_nz);
             if(s_watch_tot[i]<=8 || s_watch_tot[i]%50000==0 ||
-               (v!=0 && v!=0xDEADu && s_watch_nz[i]<64)){
-                if(v!=0 && v!=0xDEADu) s_watch_nz[i]++;
+               (_is_nz && (s_watch_nz[i]<64 || _uncap))){
+                if(_is_nz) s_watch_nz[i]++;
                 fprintf(stderr,"[watchmem] %s write off=0x%X sz=%u now=0x%08X%s pc=0x%08X lr=0x%08X (tot=%u)\n",
                     s_watch_nm[i], offset, size, v, exact?"":"%",
                     g_cpu.pc, g_cpu.lr, s_watch_tot[i]); }
@@ -1566,6 +1574,16 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     // fzEYzb73b: live file-op entries on the game path (all dispatched):
     // 1AFB8 (fires, lr=1BDD0), 1BD84, 1BC54, 1BDF0. Dump args + lr.
+    // fzEYzb90: + the 16DF8 (DVDConvertPathToEntrynum) callers: 07040
+    // (game boot), 1717C/1747C (DVD layer). ANY fire = first READ attempt.
+    // + 6B4C (game boot worker calling 175C0/DVDOpen) liveness.
+    if(addr==0x80007040u||addr==0x8001717Cu||addr==0x8001747Cu||addr==0x80006B4Cu||addr==0x80070620u||addr==0x80070600u||addr==0x80070604u){
+      static unsigned _c1=0,_c2=0,_c3=0,_c4=0,_c5=0,_c6=0,_c7=0;
+      unsigned *c=addr==0x80007040u?&_c1:addr==0x8001717Cu?&_c2:addr==0x8001747Cu?&_c3:addr==0x80006B4Cu?&_c4:addr==0x80070620u?&_c5:addr==0x80070600u?&_c6:&_c7; (*c)++;
+      const char *_nm=addr==0x80007040u?"07040-16DF8caller":addr==0x8001717Cu?"1717C-16DF8caller":addr==0x8001747Cu?"1747C-16DF8caller":addr==0x80006B4Cu?"6B4C-bootworker":addr==0x80070620u?"70620-setter-entry":addr==0x80070600u?"70600-setter-entry":"70604-setter-ret";
+      if(*c<=4) fprintf(stderr,"[dvdsm] %s r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+        _nm, cpu->gpr[3], cpu->gpr[4], cpu->lr, *c);
+      return false; }
     if(addr==0x8001AFB8u||addr==0x8001BD84u||addr==0x8001BC54u||addr==0x8001BDF0u){
       static unsigned _f1=0,_f2=0,_f3=0,_f4=0;
       unsigned *c=addr==0x8001AFB8u?&_f1:addr==0x8001BD84u?&_f2:addr==0x8001BC54u?&_f3:&_f4; (*c)++;
@@ -1586,10 +1604,21 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // lr names the caller; r7 bit3 (from the VI field-status polls) decides
     // 1A5F8->1A5FC vs 1A600. Fires => waker chain entered; never => dead.
     if(addr==0x8001A55Cu){
+      // fzEYzb93: dump the STORED INTSR0-3 HI halves per entry (ground
+      // truth for the r7 reconstruction: does entry k see INTSR2/3 set?).
+      // VCT-gated retrace model: INTSR0/1 latch (game-armed), INTSR2/3
+      // (0x0000, VCT=0) stay clear => r7=0x3 => no-wake side expected.
       static unsigned _n=0; if(++_n<=6){ uint32_t w=0xDEADu;
         guest_read32(cpu->gpr[13]-31388u,&w);
-        fprintf(stderr,"[dvdsm] 1A55C-waker-entry r3=0x%08X r4=0x%08X r13=0x%08X waitword=%u lr=0x%08X (#%u)\n",
-          cpu->gpr[3], cpu->gpr[4], cpu->gpr[13], w, cpu->lr, _n); }
+        u64 v30=0,v34=0,v38=0,v3c=0;
+        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002030u, 2u, &v30);
+        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002034u, 2u, &v34);
+        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002038u, 2u, &v38);
+        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC00203Cu, 2u, &v3c);
+        fprintf(stderr,"[dvdsm] 1A55C-waker-entry r3=0x%08X r4=0x%08X waitword=%u VI30=%04X VI34=%04X VI38=%04X VI3C=%04X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], w,
+          (unsigned)v30&0xFFFFu, (unsigned)v34&0xFFFFu,
+          (unsigned)v38&0xFFFFu, (unsigned)v3c&0xFFFFu, cpu->lr, _n); }
       return false; }
     // fzEYzb75: 1A600 (no-wake side, downcount) vs 1A60C (waker side,
     // NATIVE fallthrough of the 1A5FC bc — never dispatches). 1A600 fires
@@ -1598,12 +1627,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // fzEYzb84 (answered — filtered [vi] waker-ACK trace): each entry ACKs
     // exactly 2 INTSRs (0x2030->0x1107 at 1A590, 0x2034->0x1001 at 1A5AC),
     // i.e. reads bit15-SET at 1A584/1A5A4 => r7=0x3 (bits 0,1). INTSR2/3
-    // (0x2038/0x203C, read 0x0) never ACK => r7 bits 2,3 stay 0 =>
-    // 1A5F0 tests bit2: CLEAR => 1A600 no-wake side every time. The waker
-    // gate needs INTSR2 (VCT=1) and INTSR3 armed with a nonzero compare;
-    // the game's video config only arms INTSR0/1 (PRERETRACE/POSTRETRACE).
-    // NEXT: who arms INTSR2/3 on hardware — the VI timing path
-    // (UpdateParameters/OutputField per retrace) or a later boot stage.
+    // (0x2038/0x203C) stay 0x0000 => r7 bits 2,3 stay 0 =>
+    // 1A5F0 tests bit2: CLEAR (r7=0x3) => TAKEN to 1A600 no-wake side.
+    // (bc 4,2 with CR0[EQ] set branches to 1A600 — confirmed by the chunk:
+    // `if (ctr_ok && cr_ok) goto label_8001A600` where cr_ok tests the EQ
+    // bit SET. An earlier note tangled the BO semantics; the code is
+    // unambiguous: EQ=>1A600 no-wake, NE=>fall to 1A5F8.)
+    // fzEYzb94 (standing question): what arms INTSR2 (VCT=1, HCT=1) on
+    // hardware such that the 1A5C0 poll observes bit15 set?
     if(addr==0x8001A600u||addr==0x8001A60Cu){
       static unsigned _g3=0,_g4=0;
       unsigned *c=addr==0x8001A600u?&_g3:&_g4; (*c)++;
