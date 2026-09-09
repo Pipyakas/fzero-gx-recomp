@@ -1578,20 +1578,29 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // across chunks. They never fire (6x 1A55C entries, 0x 1A600/1A60C):
     // the frame runs entry->1A628 natively in ONE dolrecomp_call, so the
     // gate outcome is journal-visible only (does 1A618's stw land?).
-    // fzEYzb80 answered via the [vi] poll-read trace + r7 reconstruction:
-    // polls return 0x9107/0x9001/0x0/0x0 => bits set in sequence:
-    // 1A584: 0x9107&0x8000 SET => r7|=1 (bit0)
-    // 1A5A4: 0x9001&0x8000 SET => r7|=2 (bit1)
-    // 1A5C0: 0x0000 CLEAR => r7 bit2 stays 0
-    // 1A5DC: 0x0000 CLEAR => r7 bit3 stays 0 => r7=0x3
-    // 1A5F0 tests bit2 (0x4): CLEAR => fall to 1A600 (BE00, no-wake side)
-    // 1A5F8 never reached on this path => 1A618 waker never runs.
+    // fzEYzb84 (answered — filtered [vi] waker-ACK trace): each entry ACKs
+    // exactly 2 INTSRs (0x2030->0x1107 at 1A590, 0x2034->0x1001 at 1A5AC),
+    // i.e. reads bit15-SET at 1A584/1A5A4 => r7=0x3 (bits 0,1). INTSR2/3
+    // (0x2038/0x203C, read 0x0) never ACK => r7 bits 2,3 stay 0 =>
+    // 1A5F0 tests bit2: CLEAR => 1A600 no-wake side every time. The waker
+    // gate needs INTSR2 (VCT=1) and INTSR3 armed with a nonzero compare;
+    // the game's video config only arms INTSR0/1 (PRERETRACE/POSTRETRACE).
+    // NEXT: who arms INTSR2/3 on hardware — the VI timing path
+    // (UpdateParameters/OutputField per retrace) or a later boot stage.
     if(addr==0x8001A600u||addr==0x8001A60Cu){
       static unsigned _g3=0,_g4=0;
       unsigned *c=addr==0x8001A600u?&_g3:&_g4; (*c)++;
-      if(*c<=6) fprintf(stderr,"[dvdsm] %s r7=0x%08X lr=0x%08X (#%u)\n",
+      if(*c<=4||*c%200000==0) fprintf(stderr,"[dvdsm] %s r7=0x%08X lr=0x%08X (nowake=%u wake=%u)\n",
         addr==0x8001A600u?"1A600-NOWAKE":"1A60C-WAKE",
-        cpu->gpr[7], cpu->lr, *c);
+        cpu->gpr[7], cpu->lr, _g3, _g4);
+      return false; }
+    // fzEYzb83: memset entry (dispatched). The journal's 64 nonzero
+    // waitword hits (now=1 at pc=34E4) are memset's word-fill pattern, not
+    // the 1A618 waker (different pc; the journal reads the stw's own bytes
+    // back mid-burst). Confirm live: dump r3(dest)/r4(fill)/r5(len)+lr.
+    if(addr==0x80003458u){
+      static unsigned _m=0; if(++_m<=6) fprintf(stderr,"[dvdsm] 3458-memset r3=0x%08X r4=0x%08X r5=%u lr=0x%08X (#%u)\n",
+        cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->lr, _m);
       return false; }
     // fzEYzb68b: 1A618 (dispatched, has downcount) is the wait-word
     // INCREMENTER (stw [r13-31388]+1). Fires => the 1A5FC gate took the
