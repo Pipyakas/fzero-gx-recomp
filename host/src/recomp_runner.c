@@ -38,19 +38,22 @@ static u64 g_tb = 0;
 // cpu.c journal hook. -1 slot = unused. Slots: [0]=gate2 target word,
 // [1]=game wait word -31388, [2]=DVD curblk -31488, [3]=-31372 fnptr
 // (fzEYzb65: 1A7AC/1AF30 writers are native labels, invisible to
-// dispatch probes — the journal sees them).
-static u32 s_watch_off[4] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
-static const char* s_watch_nm[4] = {"gate2word", "waitword31388", "curblk31488", "fnptr31372"};
+// dispatch probes — the journal sees them), [4]=-31452 m52,
+// [5]=-31456 m56 (fzEYzb66: 1A628 runs natively inside the 17958 frame;
+// only a journal slot can tell whether the 179C8 slot-invoke leg or
+// the 179DC clear leg executes).
+static u32 s_watch_off[6] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
+static const char* s_watch_nm[6] = {"gate2word", "waitword31388", "curblk31488", "fnptr31372", "m52drv", "m56drv"};
 static void watch_journal(u32 offset, u32 size, void* user){
     (void)user; (void)size;
-    for(int i=0;i<4;i++)
+    for(int i=0;i<6;i++)
         if(s_watch_off[i]!=0xFFFFFFFFu && offset < s_watch_off[i]+4u && s_watch_off[i] < offset+size){
             uint32_t a = GC_RAM_BASE + s_watch_off[i], v = 0xDEADu;
             if(a >= GC_RAM_BASE && a + 4 <= GC_RAM_BASE + g_cpu.ram_size){
                 uint8_t* p = g_cpu.ram + (a - GC_RAM_BASE);
                 v = ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
             }
-            { static unsigned _n=0; if(++_n<=16)
+            { static unsigned _n=0; if(++_n<=24)
                 fprintf(stderr,"[watchmem] %s write off=0x%X sz=%u now=0x%08X pc=0x%08X lr=0x%08X\n",
                     s_watch_nm[i], offset, size, v, g_cpu.pc, g_cpu.lr); }
         }
@@ -1315,10 +1318,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[2]=a-GC_RAM_BASE; }
         { uint32_t a=cpu->gpr[13]-31372u;
           if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[3]=a-GC_RAM_BASE; }
+        { uint32_t a=cpu->gpr[13]-31452u;
+          if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[4]=a-GC_RAM_BASE; }
+        { uint32_t a=cpu->gpr[13]-31456u;
+          if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[5]=a-GC_RAM_BASE; }
         { extern void ppc_set_mem_write_journal(void (*fn)(u32,u32,void*), void* user);
           ppc_set_mem_write_journal(watch_journal, NULL); }
-        fprintf(stderr,"[watchmem] armed gate2off=0x%X waitoff=0x%X curblkoff=0x%X fnptroff=0x%X (r13=0x%08X)\n",
-          s_watch_off[0], s_watch_off[1], s_watch_off[2], s_watch_off[3], cpu->gpr[13]);
+        fprintf(stderr,"[watchmem] armed gate2off=0x%X waitoff=0x%X curblkoff=0x%X fnptroff=0x%X m52off=0x%X m56off=0x%X (r13=0x%08X)\n",
+          s_watch_off[0], s_watch_off[1], s_watch_off[2], s_watch_off[3], s_watch_off[4], s_watch_off[5], cpu->gpr[13]);
       }
       return false; }
     // fzEYzb59: 14158 is the DISPATCHED entry of the 14158-1416C leg
