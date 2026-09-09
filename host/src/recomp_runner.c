@@ -36,19 +36,21 @@ static int g_inited = 0;
 static u64 g_tb = 0;
 // fzEYzb58 watch-addrs: guest RAM offsets watched for ANY write via the
 // cpu.c journal hook. -1 slot = unused. Slots: [0]=gate2 target word,
-// [1]=game wait word -31388, [2]=DVD curblk -31488 (who clears it?).
-static u32 s_watch_off[3] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
-static const char* s_watch_nm[3] = {"gate2word", "waitword31388", "curblk31488"};
+// [1]=game wait word -31388, [2]=DVD curblk -31488, [3]=-31372 fnptr
+// (fzEYzb65: 1A7AC/1AF30 writers are native labels, invisible to
+// dispatch probes — the journal sees them).
+static u32 s_watch_off[4] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
+static const char* s_watch_nm[4] = {"gate2word", "waitword31388", "curblk31488", "fnptr31372"};
 static void watch_journal(u32 offset, u32 size, void* user){
     (void)user; (void)size;
-    for(int i=0;i<3;i++)
+    for(int i=0;i<4;i++)
         if(s_watch_off[i]!=0xFFFFFFFFu && offset < s_watch_off[i]+4u && s_watch_off[i] < offset+size){
             uint32_t a = GC_RAM_BASE + s_watch_off[i], v = 0xDEADu;
             if(a >= GC_RAM_BASE && a + 4 <= GC_RAM_BASE + g_cpu.ram_size){
                 uint8_t* p = g_cpu.ram + (a - GC_RAM_BASE);
                 v = ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
             }
-            { static unsigned _n=0; if(++_n<=12)
+            { static unsigned _n=0; if(++_n<=16)
                 fprintf(stderr,"[watchmem] %s write off=0x%X sz=%u now=0x%08X pc=0x%08X lr=0x%08X\n",
                     s_watch_nm[i], offset, size, v, g_cpu.pc, g_cpu.lr); }
         }
@@ -429,6 +431,8 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           // decode — 18DD8 is "inquiry succeeded, issue next inquiry",
           // not "advance to data". REVERTED to no-seed; the loop needs a
           // different key, not m56.)
+          { extern void dol_hle_note_command_issuer(CPUState* cpu);
+            dol_hle_note_command_issuer(cmd->cpu); }
           dol_hle_queue_guest_callback(cb, 0, block); }
         return DOL_DI_COMMAND_COMPLETE;
     }
@@ -1309,10 +1313,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[1]=a-GC_RAM_BASE; }
         { uint32_t a=cpu->gpr[13]-31488u;
           if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[2]=a-GC_RAM_BASE; }
+        { uint32_t a=cpu->gpr[13]-31372u;
+          if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[3]=a-GC_RAM_BASE; }
         { extern void ppc_set_mem_write_journal(void (*fn)(u32,u32,void*), void* user);
           ppc_set_mem_write_journal(watch_journal, NULL); }
-        fprintf(stderr,"[watchmem] armed gate2off=0x%X waitoff=0x%X curblkoff=0x%X (r13=0x%08X)\n",
-          s_watch_off[0], s_watch_off[1], s_watch_off[2], cpu->gpr[13]);
+        fprintf(stderr,"[watchmem] armed gate2off=0x%X waitoff=0x%X curblkoff=0x%X fnptroff=0x%X (r13=0x%08X)\n",
+          s_watch_off[0], s_watch_off[1], s_watch_off[2], s_watch_off[3], cpu->gpr[13]);
       }
       return false; }
     // fzEYzb59: 14158 is the DISPATCHED entry of the 14158-1416C leg
@@ -1336,6 +1342,22 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         if(p>=GC_RAM_BASE) guest_read32(p,&v);
         fprintf(stderr,"[dvdsm] 7096C gate2ptr=0x%08X [ptr]=0x%08X lr=0x%08X (#%u)\n",
           p, v, cpu->lr, _g); }
+      return false; }
+    // fzEYzb65 (CORRECTED): 1A7AC/1AF30 are NATIVE branch labels (no
+    // downcount) — invisible to dispatch probes by construction (same as
+    // 18A38). The -31372 fnptr word is watched via the journal instead
+    // (slot3 armed at 1AF64 — see watch_journal). 1A628 IS dispatched
+    // but never fires => the waker chain never reaches the indirect
+    // call. Its ENTRIES need probing instead (1A55C? 1A500? — TBD).
+    // fzEYzb62: command-issue register snapshot: log issuer r30/r31 at
+    // 16A38 (INQUIRY) + 16920 (STOPMOTOR) entry. The completion callback
+    // (18D1C) installs these as its r30/r31 (issuer-thread values, not
+    // the preempted slice's allocator leftovers). First-4 each.
+    if(addr==0x80016A38u||addr==0x80016920u){
+      static unsigned _q1=0,_q2=0; unsigned *c=addr==0x80016A38u?&_q1:&_q2; (*c)++;
+      if(*c<=4) fprintf(stderr,"[dvdsm] %s-issue r30=0x%08X r31=0x%08X r3=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x80016A38u?"16A38":"16920",
+        cpu->gpr[30], cpu->gpr[31], cpu->gpr[3], cpu->lr, *c);
       return false; }
     // fzEYzb9: 16C94 (dispatched entry) encloses the native 16D50
     // flag-setter tail (flag-31592=1 + flag-31560=1). Fires => setter
@@ -1539,6 +1561,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[dvdsm] %s m52=0x%08X r12=0x%08X r3=%d (#%u)\n",
           _nm[_i], m, cpu->gpr[12], (int32_t)cpu->gpr[3], _f[_i]); }
       return false; }
+    // fzEYzb63: bctr dispatch INSIDE the 18D1C completion frame is
+    // invisible (18A38 bctr is a native branch label — the whole
+    // 18D1C->...->192xx frame runs in ONE dolrecomp_call, so slice/host
+    // probes never fire mid-frame). Instrument INSTEAD at frame ENTRY:
+    // extend the 18D1C probe (below) with post-frame state — but the
+    // body runs native, so instead log the 189FC dispatcher's tag/row
+    // (which selects 18CC8 vs sibling legs on the NEXT drain) — already
+    // covered. This probe is REMOVED (never fires by construction).
     // fzEYza: 187F0/187FC/18808/1881C/18820 all dispatch on the
     // 19FA4ret=0 early-out (curblk=0) vs continue routes. First-fire +
     // counters show which the drain takes per completion.
@@ -1557,6 +1587,11 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[watch] %s m64=%u lr=0x%08X (#%u)\n",
           addr==0x80018830u?"18830-consume":"18868-skip", a, cpu->lr, *c); }
       return false; }
+    // fzEYzb63: 18A38 jump-table dispatch (the 18D1C completion frame's
+    // routing table: 18A38 bctr -> per-tag legs 18B04/18B2C/.../18CF4).
+    // Log the CTR target (which leg each completion takes) + r3 (result).
+    // First-8 + every-5M counter. If all completions land on the same
+    // leg, that leg owns the re-issue.
     // fzEK (corrected by fzEYzb28): 19FA4 fires as a BL-TARGET (resume pc
     // after 187E4's bl), once per drain — r3 is the CONSTANT scan arg
     // (0x80160000), NOT the result. Result returns natively to 187E8.
@@ -1577,6 +1612,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // at 18D1C and 16920 (0x1823CF40) — rides in on the SAVED slice context
     // (trampoline preempts AC34 with garbage r30). Only r3/r4 are args.
     // Fix (fzBU): zero the callback's non-arg regs at poll time.
+    // fzEYzb64 (FRAME-EXIT probe): the 18D1C frame runs native to
+    // completion, so slice probes can't see its interior — but its EXIT
+    // state IS observable: the frame returns to HLE_CALLBACK_RETURN, and
+    // the NEXT slice iterations dispatch the frame's tail calls (16920
+    // STOPMOTOR issue, 1A178 report, 187CC drain...). Log POST-frame
+    // block words here at the NEXT 18D1C entry (i.e. previous frame's
+    // exit state): blk+12 (b12 filer), -31456 (m56), -31448 (m48),
+    // -31488 (curblk). If the exit state ever differs from entry state
+    // (b12=1/m56=0/m48=0), the frame advanced.
     if(addr==0x80018D1Cu){
       static unsigned _d=0; if(++_d<=4||_d%5000000==0){
         uint32_t v60=0,v56=0,v36=0,v32=0,b12=0,v64=0,v48=0; uint32_t blk=cpu->gpr[4];

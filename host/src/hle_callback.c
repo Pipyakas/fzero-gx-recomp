@@ -49,6 +49,16 @@ static u32 g_callback_read;
 static u32 g_callback_count;
 static bool g_callback_active;
 static HleSavedContext g_callback_context;
+// Issuing-thread r30/r31 snapshot (see poll_callback): recorded by the
+// DI executor when it queues a completion (runs on the issuer thread
+// inside the 16A38/16920 wrapper, before the callback preempts).
+static u32 g_issuer_r30 = 0;
+static u32 g_issuer_r31 = 0;
+void dol_hle_note_command_issuer(CPUState* cpu) {
+    if(cpu == NULL) return;
+    g_issuer_r30 = cpu->gpr[30];
+    g_issuer_r31 = cpu->gpr[31];
+}
 
 static void save_callback_context(HleSavedContext* saved, const CPUState* cpu) {
     memcpy(saved->gpr, cpu->gpr, sizeof saved->gpr);
@@ -127,24 +137,22 @@ bool dol_hle_poll_callback(CPUState* cpu) {
 
     save_callback_context(&g_callback_context, cpu);
     g_callback_active = true;
-    // fzEV: callbacks run on the issuing thread with a FRESH condition
-    // register — the preempted slice's CR (e.g. AD1C-walk compare residue)
-    // must not leak into the callback body. The 18D3C branch reads CR1
-    // (set by 18D20 cmplwi) natively mid-chunk, but any stale CR1 from the
-    // preempted context that survives to a later compare corrupts the
-    // branch. Reset CR (and XER carried-borrow state) at dispatch.
+    // The DI interrupt runs the LOW-LEVEL callback with the interrupted
+    // thread's registers (hardware: the thread that issued the command;
+    // ours: the preempted slice's — same thread in practice, since the
+    // DVD thread is the only issuer). The 18D1C body reads r30/r31 as
+    // its own locals (16960/16984) because the COMPILER allocated them
+    // as such — on hardware they hold the issuer's values at interrupt
+    // time. The issuer's r30/r31 at 16A9C-bl-AC34 time are the DVD
+    // thread's (NOT the allocator's 0x1823CF40 leftovers in a preempted
+    // slice). Recover them: the queue-insert path (16AD4+) runs on the
+    // issuer thread, so snapshot issuer r30/r31 when the COMMAND is
+    // queued (dol_hle_note_command_issuer) and install them here.
+    // CR/XER reset (fzEV). r3/r4 = callback args (result/block).
     cpu->cr = 0;
     cpu->xer &= ~0x20000000u;
-    // fzBU: the callback's NON-ARG regs must match what the preempted slice
-    // had — EXCEPT r30/r31, which the native 18D1C body reads (16984 r6=r30,
-    // 16960 r31=...) as *its own locals* without ever writing them first.
-    // In real hardware the callback runs on the thread that issued the
-    // command, whose r30/r31 hold that thread's values — not the allocator's
-    // leftovers (0x1823CF40) from a preempted AC34 slice. Zero r30/r31 only;
-    // everything else restores exactly (post-lap SELF-link came from stale
-    // r30; keep the slice's other regs intact, including r1/sp).
-    cpu->gpr[30] = 0;
-    cpu->gpr[31] = 0;
+    cpu->gpr[30] = g_issuer_r30;
+    cpu->gpr[31] = g_issuer_r31;
     cpu->gpr[3] = pending.r3;
     cpu->gpr[4] = pending.r4;
     cpu->pc = pending.address;
