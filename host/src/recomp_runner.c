@@ -2309,9 +2309,11 @@ void recomp_run_slice(void){
         // VIWaitForRetrace-style loops observe level-triggered pending.
         { static unsigned long long _rt=0; if(++_rt==1||_rt%2000000==0){
           uint32_t d4=0; guest_read32(0x800000D4u,&d4);
-          fprintf(stderr,"[irq] retrace#%llu DIpend=%d ext=%d D4=0x%08X disp=0x%08X\n",
+          fprintf(stderr,"[irq] retrace#%llu DIpend=%d ext=%d EE=%d mask=0x%08X cause=0x%08X D4=0x%08X disp=0x%08X\n",
             _rt, dol_di_interrupt_pending(&s_di),
-            dol_interrupts_external_pending(&s_interrupts), d4, s_os_dispatch_interrupt); } }
+            dol_interrupts_external_pending(&s_interrupts), (g_cpu.msr&MSR_EE)!=0,
+            dol_interrupts_pi_mask(&s_interrupts), dol_interrupts_pi_cause(&s_interrupts),
+            d4, s_os_dispatch_interrupt); } }
         // fzEA: +1 timebase tick per slice-loop iteration (deterministic:
         // the dispatch count is deterministic). Back-to-back DI completions
         // (INQUIRY then STOPMOTOR) otherwise share one frozen tb, so the
@@ -2356,7 +2358,11 @@ void recomp_run_slice(void){
         // dispatch by design — no bug here.)
         if(dol_hle_poll_callback(&g_cpu)){
           uint32_t cbpc = g_cpu.pc;
-          { static unsigned _t=0; if(++_t<=4) fprintf(stderr,"[cb] trampoline cb=0x%08X from pc=0x%08X\n", cbpc, pc); }
+          // fzEYzb71: uncap fully (was first-4): #trampolines vs #dispatches
+          // diagnoses the queue. Trampoline > dispatch by exactly the nested
+          // (poll_nested) count; dispatch stopping while issues continue =
+          // queue overflow (cap 32) or callback never queued.
+          { static unsigned _t=0; if(++_t<=12||_t%100==0) fprintf(stderr,"[cb] trampoline cb=0x%08X from pc=0x%08X (#%u)\n", cbpc, pc, _t); }
           // fzER: drive the callback frame to completion (blr to
           // HLE_CALLBACK_RETURN), resuming across downcount-budget returns
           // via the frame's own pc — NOT via slice re-dispatch. The old

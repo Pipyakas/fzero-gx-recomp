@@ -159,7 +159,7 @@ bool dol_hle_poll_callback(CPUState* cpu) {
     cpu->lr = HLE_CALLBACK_RETURN;
     cpu->exception = 0;
     cpu->program_exception = 0;
-    { static unsigned _n=0; if(++_n<=3||_n%200000==0)
+    { static unsigned _n=0; if(++_n<=8||_n%200==0)
       fprintf(stderr, "[cb] dispatch callback=0x%08X r3=0x%08X r4=0x%08X (#%u)\n",
             pending.address, pending.r3, pending.r4, _n); }
     return true;
