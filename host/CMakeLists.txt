@@ -55,14 +55,17 @@ file(GLOB RECOMP_DOL_CHUNKS_FB "${CMAKE_CURRENT_SOURCE_DIR}/../build/recomp_all/
 list(APPEND RECOMP_DOL_CHUNKS ${RECOMP_DOL_CHUNKS_FB})
 
 # GXRuntime chassis (C-only, no Aurora): VI/PI interrupt model + retrace clock
-# + DI (DVD interface) model + DVD image/FST layer.
+# + DI (DVD interface) model + DVD image/FST layer + DSP/AI audio DMA +
+# ARAM + EXI.
 set(GXRUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vendor/RingOut/ModernGekko/vendor/dolphin/GXRuntime")
-# NOTE: guest_memory.c/memory_card.c/aram.c/platform.c/headless_backend.c
+# NOTE: guest_memory.c/memory_card.c/platform.c/headless_backend.c
 # are NOT included: guest_memory.c targets a newer CPUState (exram +
 # external_pointer tail) than DolRecomp's cpu.h in this TU, and the rest
-# pull platform/GX deps. hle_core.c's Card/LC/ARAM helpers that need them
+# pull platform/GX deps. hle_core.c's Card/LC helpers that need them
 # are unused here (only queue/poll/return + OSReport/DVD/PAD paths matter);
 # if link errors name them, add minimal local stubs instead of the files.
+# audio_dma.c needs dol_platform_audio_set_sample_rate: platform.c's version
+# is a null-safe no-op without ops registered, so link platform.c too.
 set(GXRUNTIME_SOURCES
     ${GXRUNTIME_DIR}/src/mmio_bus.c
     ${GXRUNTIME_DIR}/src/interrupts.c
@@ -71,6 +74,10 @@ set(GXRUNTIME_SOURCES
     ${GXRUNTIME_DIR}/src/di.c
     ${GXRUNTIME_DIR}/src/dvd.c
     ${GXRUNTIME_DIR}/src/si.c
+    ${GXRUNTIME_DIR}/src/audio_dma.c
+    ${GXRUNTIME_DIR}/src/aram.c
+    ${GXRUNTIME_DIR}/src/exi.c
+    ${GXRUNTIME_DIR}/src/platform.c
     ${GXRUNTIME_DIR}/src/hle/hle_abi.c
     src/hle_callback.c
 )

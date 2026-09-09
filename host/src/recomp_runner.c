@@ -17,6 +17,9 @@
 #include "gxruntime/di.h"
 #include "gxruntime/dvd.h"
 #include "gxruntime/si.h"
+#include "gxruntime/audio_dma.h"
+#include "gxruntime/aram.h"
+#include "gxruntime/exi.h"
 // Local callback trampoline (host/src/hle_callback.c), extracted from
 // GXRuntime hle_core.c — hle_core.c itself can't link here (newer CPUState
 // + card/ARAM/platform deps). Keep hle_abi.h out too (guest_memory dep);
@@ -31,6 +34,25 @@ void dol_hle_init(const void* config);
 static CPUState g_cpu;
 static int g_inited = 0;
 static u64 g_tb = 0;
+// fzEYzb58 watch-addrs: guest RAM offsets watched for ANY write via the
+// cpu.c journal hook. -1 slot = unused. Slots: [0]=gate2 target word,
+// [1]=game wait word -31388, [2]=DVD curblk -31488 (who clears it?).
+static u32 s_watch_off[3] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
+static const char* s_watch_nm[3] = {"gate2word", "waitword31388", "curblk31488"};
+static void watch_journal(u32 offset, u32 size, void* user){
+    (void)user; (void)size;
+    for(int i=0;i<3;i++)
+        if(s_watch_off[i]!=0xFFFFFFFFu && offset < s_watch_off[i]+4u && s_watch_off[i] < offset+size){
+            uint32_t a = GC_RAM_BASE + s_watch_off[i], v = 0xDEADu;
+            if(a >= GC_RAM_BASE && a + 4 <= GC_RAM_BASE + g_cpu.ram_size){
+                uint8_t* p = g_cpu.ram + (a - GC_RAM_BASE);
+                v = ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
+            }
+            { static unsigned _n=0; if(++_n<=12)
+                fprintf(stderr,"[watchmem] %s write off=0x%X sz=%u now=0x%08X pc=0x%08X lr=0x%08X\n",
+                    s_watch_nm[i], offset, size, v, g_cpu.pc, g_cpu.lr); }
+        }
+}
 static uint64_t s_mmio_reads=0, s_mmio_writes=0;
 static uint32_t s_last_exc_pc=0, s_last_exc=0;
 #define GP_SIZE (128*1024)
@@ -70,6 +92,20 @@ static DolInterrupts s_interrupts;
 static DolViClock s_vi_clock;
 static DolDi s_di;
 static DolSiDevice s_si;
+static DolAudioDma s_audio_dma;
+static DolExi s_exi;
+// DSP CONTROL shadow + mailbox + ARAM-IRQ latch (Dolphin DSP.cpp/DSPHLE
+// semantics, no DSP emulator): power-on CONTROL = DSPHalt (0x0004);
+// DSPReset (bit0) auto-clears on write; DSPInitCode (0x0400) reads 0
+// (hardware clears it ~130 ticks after DSPInit falls; boot only waits
+// for clear); ARAM-DMA completion latches INT_ARAM (0x0020) until the
+// guest acks (write-1-to-clear); mailbox FROM_HI MSB reports DSP-ready,
+// latched by the first ARAM-DMA completion (B404 waits clear pre-DMA,
+// B4D4 waits set post-DMA).
+static u16 s_dsp_control = 0x0004u;
+static bool s_dsp_aram_irq = false;
+static bool s_dsp_mail_ready = false;
+static u16 s_dsp_mail_to_hi = 0u, s_dsp_mail_to_lo = 0u;
 static int s_chassis_inited = 0;
 static int s_disc_present_logged = 0;
 static uint64_t s_ext_deliveries = 0; // external-interrupt deliveries to guest
@@ -108,6 +144,173 @@ static bool chassis_si_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 val
     if(!dol_si_mmio_contains(ea)) return false;
     dol_si_mmio_write(&s_si, ea, (u8)size, value);
     dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_SI, dol_si_interrupt_pending(&s_si));
+    return true;
+}
+// DSP (0xCC005000, 0x40) + AI (0xCC006C00, 0x20) via the production
+// DolAudioDma model (Dolphin AudioInterface.cpp / DSP.cpp register
+// semantics): AI control init 0x42 reads back 32kHz at boot; DSP
+// CONTROL/HALT/DMAState/ARAM-mode/refresh follow Dolphin's power-on
+// defaults; ARAM-DMA trigger + AID interrupt feed PI like hardware.
+// No audio output: dol_platform_audio_* are no-ops here (platform HAL
+// unset), so the model advances register state with zero guest-state
+// divergence vs audio-on (PLAN M5: audio on/off identical guest state).
+static bool chassis_dsp_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* value){
+    (void)user; (void)cpu;
+    // Dolphin ReadToSmaller: 32-bit DSP/AI reads combine two 16-bit halves.
+    if(size == 4u && ((ea >= 0xCC005000u && ea + 4u <= 0xCC005040u) ||
+                      (ea >= 0xCC006C00u && ea + 4u <= 0xCC006C20u))){
+        u64 hi = 0, lo = 0;
+        if(!chassis_dsp_read(user, cpu, ea, 2u, &hi)) return false;
+        if(!chassis_dsp_read(user, cpu, ea + 2u, 2u, &lo)) return false;
+        if(value) *value = ((hi & 0xFFFFu) << 16) | (lo & 0xFFFFu);
+        return true;
+    }
+    if(ea >= 0xCC005000u && ea < 0xCC005040u){
+        u32 off = ea - 0xCC005000u;
+        if(value){
+            // FROM mailbox: MSB = DSP-ready (set ONLY by ARAM-DMA
+            // completion; cleared when the guest collects FROM_LO so the
+            // next pass's empty-wait observes empty again).
+            if(off == 0x04u && size == 2u){ *value = s_dsp_mail_ready ? 0x8000u : 0u; return true; }
+            if(off == 0x06u && size == 2u){
+                *value = 0u;
+                s_dsp_mail_ready = false;
+                return true;
+            }
+            // CONTROL (Dolphin DSP.cpp/DSPHLE): shadow + live status.
+            // ARAM bit = our ARAM-IRQ latch; AID bit = audio-DMA engine;
+            // DMAState = 0 (synchronous DMA always complete); power-on
+            // Halt = 1.
+            if(off == 0x0Au && size == 2u){
+                u16 c = s_dsp_control;
+                if(s_dsp_aram_irq) c |= 0x0020u; else c &= (u16)~0x0020u;
+                if(dol_audio_dma_interrupt_pending(&s_audio_dma)) c |= 0x0008u;
+                else c &= (u16)~0x0008u;
+                c &= (u16)~0x0200u; // DMAState idle
+                *value = c; return true;
+            }
+            if(off == 0x16u && size == 2u){ *value = 0x0001u; return true; } // AR_MODE init'd
+            if(off == 0x1Au && size == 2u){ *value = 156u; return true; } // AR_REFRESH 156MHz
+        }
+        dol_audio_dma_dsp_mmio_read(&s_audio_dma, off, size, value);
+        return true;
+    }
+    if(ea >= 0xCC006C00u && ea < 0xCC006C20u){
+        dol_audio_dma_ai_mmio_read(&s_audio_dma, ea - 0xCC006C00u, size, value);
+        return true;
+    }
+    return false;
+}
+static bool chassis_dsp_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value){
+    (void)user;
+    // Dolphin combines 32-bit DSP accesses into two 16-bit ones
+    // (WriteToSmaller); the boot ARAM-DMA trigger is a 32-bit stwu to
+    // CNT_H+CNT_L (0xCC005028). Split HI-first so CNT_L sees CNT_H.
+    if(size == 4u && ((ea >= 0xCC005000u && ea + 4u <= 0xCC005040u) ||
+                      (ea >= 0xCC006C00u && ea + 4u <= 0xCC006C20u))){
+        bool ok = chassis_dsp_write(user, cpu, ea, 2u, (value >> 16) & 0xFFFFu);
+        ok = chassis_dsp_write(user, cpu, ea + 2u, 2u, value & 0xFFFFu) && ok;
+        return ok;
+    }
+    if(ea >= 0xCC005000u && ea < 0xCC005040u){
+        u32 off = ea - 0xCC005000u;
+        // ARAM-DMA trigger (Dolphin DSP.cpp: AR_DMA_CNT_L write runs
+        // Do_ARAM_DMA; CompleteARAM clears DMAState + raises INT_ARAM).
+        // CC-relative offsets: AR_DMA_MMADDR 0x5020/22, ARADDR 0x5024/26,
+        // CNT_H 0x5028, CNT_L 0x502A. Address halves are masked per
+        // Dolphin (HI 0x03FF, LO 0xFFE0); dir = CNT_H bit15.
+        if(off == 0x2Au && size == 2u){
+            dol_audio_dma_dsp_mmio_write(&s_audio_dma, off, size, value);
+            { u64 mhi = 0, mlo = 0, ahi = 0, alo = 0, cnth = 0;
+              dol_audio_dma_dsp_mmio_read(&s_audio_dma, 0x20u, 2u, &mhi);
+              dol_audio_dma_dsp_mmio_read(&s_audio_dma, 0x22u, 2u, &mlo);
+              dol_audio_dma_dsp_mmio_read(&s_audio_dma, 0x24u, 2u, &ahi);
+              dol_audio_dma_dsp_mmio_read(&s_audio_dma, 0x26u, 2u, &alo);
+              dol_audio_dma_dsp_mmio_read(&s_audio_dma, 0x28u, 2u, &cnth);
+              u32 mm = (((u32)mhi & 0x03FFu) << 16) | ((u32)mlo & 0xFFE0u);
+              u32 ar = (((u32)ahi & 0x03FFu) << 16) | ((u32)alo & 0xFFE0u);
+              u32 n = ((((u32)cnth & 0x03FFu) << 16) | ((u32)value & 0xFFE0u)) & 0x7FFFFFFFu;
+              bool dir = (cnth & 0x8000u) != 0u; // UARAMCount.dir
+              if(n && cpu && cpu->ram){
+                  if(dir) aram_dma_to_ram(cpu->ram, 0x80000000u | (mm & 0x01FFFFFFu), ar & 0x00FFFFFFu, n);
+                  else aram_dma_to_aram(cpu->ram, 0x80000000u | (mm & 0x01FFFFFFu), ar & 0x00FFFFFFu, n);
+              }
+              { static unsigned _n=0; if(++_n<=4)
+                  fprintf(stderr,"[dsp] ARAM-DMA dir=%u n=%u (PI DSP asserted)\n", dir?1u:0u, n); } }
+            // CompleteARAM: DMAState=0 + INT_ARAM. Mailbox also latches
+            // ready (B4D4 gate). PI DSP asserted with the ARAM-IRQ latch;
+            // the read side merges pending sources; the guest acks via
+            // CONTROL write-1-to-clear below.
+            s_dsp_mail_ready = true;
+            s_dsp_aram_irq = true;
+            dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DSP, true);
+            return true;
+        }
+        // CONTROL write (Dolphin DSP.cpp write handler): DSPReset
+        // auto-clears; ARAM/AID status bits are write-1-to-clear acks;
+        // HALT bit + masks persist. CONTROL_MASK=0x0C07 gates the
+        // emulator-owned bits; the rest passes through to the shadow.
+        if(off == 0x0Au && size == 2u){
+            u16 v = (u16)value;
+            if(v & 0x0020u) s_dsp_aram_irq = false; // ack INT_ARAM
+            if(v & 0x0008u) dol_audio_dma_ack_interrupt(&s_audio_dma); // ack AID
+            // halt tracking: B478 lift writes bit1? keep shadow of HALT/masks.
+            s_dsp_control = (u16)(((s_dsp_control & ~0x0C07u) | (v & ~0x0C07u)) |
+                                  (v & 0x0C04u));
+            s_dsp_control &= (u16)~0x0001u; // DSPReset self-clears
+            s_dsp_control &= (u16)~0x0400u; // InitCode reads clear
+            { bool pend = s_dsp_aram_irq || dol_audio_dma_dsp_interrupt_pending(&s_audio_dma);
+              dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DSP, pend); }
+            return true;
+        }
+        // MAIL_TO write just latches (TO and FROM are separate
+        // mailboxes: sending TO mail must NOT set FROM-ready, or the
+        // pre-DMA empty-wait at B404 spins on the next DSP-init pass).
+        // FROM-ready sets only on ARAM-DMA completion above and clears
+        // when the guest collects the mail (FROM_LO read).
+        if((off == 0x00u || off == 0x02u) && size == 2u){
+            if(off == 0x00u) s_dsp_mail_to_hi = (u16)value;
+            else s_dsp_mail_to_lo = (u16)value;
+            return true;
+        }
+        dol_audio_dma_dsp_mmio_write(&s_audio_dma, ea - 0xCC005000u, size, value);
+        { bool pend = s_dsp_aram_irq || dol_audio_dma_dsp_interrupt_pending(&s_audio_dma);
+          dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_DSP, pend); }
+        (void)cpu;
+        return true;
+    }
+    if(ea >= 0xCC006C00u && ea < 0xCC006C20u){
+        dol_audio_dma_ai_mmio_write(&s_audio_dma, ea - 0xCC006C00u, size, value);
+        (void)cpu;
+        return true;
+    }
+    return false;
+}
+// ARAM window (synthetic CPU-addressable base) + EXI (RTC/card on
+// channels 0/1): production models, same as Strikers mmio_install.
+static bool chassis_aram_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* value){
+    (void)user; (void)cpu;
+    if(!aram_contains(ea)) return false;
+    if(value) *value = aram_read(ea, size);
+    return true;
+}
+static bool chassis_aram_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value){
+    (void)user; (void)cpu;
+    if(!aram_contains(ea)) return false;
+    aram_write(ea, value, size);
+    return true;
+}
+static bool chassis_exi_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* value){
+    (void)user; (void)cpu;
+    if(!dol_exi_mmio_contains(ea)) return false;
+    if(value) *value = dol_exi_mmio_read(&s_exi, ea, size);
+    dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_EXI, dol_exi_interrupt_pending(&s_exi));
+    return true;
+}
+static bool chassis_exi_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value){
+    if(!dol_exi_mmio_contains(ea)) return false;
+    dol_exi_mmio_write(&s_exi, cpu, ea, size, value);
+    dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_EXI, dol_exi_interrupt_pending(&s_exi));
     return true;
 }
 static bool chassis_di_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value){
@@ -387,6 +590,21 @@ static void chassis_init(void){
       extern bool chassis_si_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value);
       dol_si_init(&s_si);
       dol_mmio_bus_register(&s_mmio_bus, 0xCC006400u, 0x100u, chassis_si_read, chassis_si_write, NULL); }
+    // DSP/AI audio (0xCC005000/0xCC006C00), EXI (0xCC006800), ARAM window:
+    // production GXRuntime models, registered like Strikers mmio_install.
+    { extern bool chassis_dsp_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* value);
+      extern bool chassis_dsp_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value);
+      extern bool chassis_exi_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* value);
+      extern bool chassis_exi_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value);
+      extern bool chassis_aram_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* value);
+      extern bool chassis_aram_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value);
+      dol_audio_dma_init(&s_audio_dma);
+      aram_init();
+      dol_exi_init(&s_exi);
+      dol_mmio_bus_register(&s_mmio_bus, 0xCC005000u, 0x40u, chassis_dsp_read, chassis_dsp_write, NULL);
+      dol_mmio_bus_register(&s_mmio_bus, 0xCC006C00u, 0x20u, chassis_dsp_read, chassis_dsp_write, NULL);
+      dol_mmio_bus_register(&s_mmio_bus, 0xCC006800u, 0x3Cu, chassis_exi_read, chassis_exi_write, NULL);
+      dol_mmio_bus_register(&s_mmio_bus, ARAM_BASE, ARAM_SIZE, chassis_aram_read, chassis_aram_write, NULL); }
     // Bootstrapping: the SDK enables TCINT (transfer-complete) interrupt
     // delivery before issuing reads. Until the guest programs the mask
     // itself, pre-enable it so the first inquiry completion is observable
@@ -1058,6 +1276,11 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // candidates: the 19E64 initializer (19E64+ writes r3/imm chains at
     // 0x801xxxxx? verify), the 19690 filer, or the 16DC0 indexer. The
     // 1AF64 probe stays (first-4) to detect ANY change across runs.
+    // fzEYzb58: watch the gate words for ANY guest write via the cpu.c
+    // journal hook (watch_journal at file top). Armed at first 1AF64
+    // hit: slot0 = gate2 word (ptr read live), slot1 = -31388 wait
+    // word, slot2 = -31488 curblk. First-12 journal hits total, then
+    // silent. If a slot NEVER logs, nothing ever writes it.
     if(addr==0x8001AF64u){
       static unsigned _n=0; if(++_n<=4){ uint32_t p=0xDEADu,v=0xDEADu,w=0xDEADu;
         guest_read32(cpu->gpr[13]-30412u,&p);
@@ -1065,13 +1288,19 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         guest_read32(cpu->gpr[13]-31388u,&w);
         fprintf(stderr,"[dvdsm] 1AF64-gamewait r3=0x%08X gate2ptr=0x%08X [ptr]=0x%08X waitword31388=%u lr=0x%08X (#%u)\n",
           cpu->gpr[3], p, v, w, cpu->lr, _n); }
+      if(s_watch_off[0]==0xFFFFFFFFu){
+        uint32_t p=0; guest_read32(cpu->gpr[13]-30412u,&p);
+        if(p>=GC_RAM_BASE && p+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[0]=p-GC_RAM_BASE;
+        { uint32_t a=cpu->gpr[13]-31388u;
+          if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[1]=a-GC_RAM_BASE; }
+        { uint32_t a=cpu->gpr[13]-31488u;
+          if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[2]=a-GC_RAM_BASE; }
+        { extern void ppc_set_mem_write_journal(void (*fn)(u32,u32,void*), void* user);
+          ppc_set_mem_write_journal(watch_journal, NULL); }
+        fprintf(stderr,"[watchmem] armed gate2off=0x%X waitoff=0x%X curblkoff=0x%X (r13=0x%08X)\n",
+          s_watch_off[0], s_watch_off[1], s_watch_off[2], cpu->gpr[13]);
+      }
       return false; }
-    // fzEYzb58: watch the gate words for ANY guest write: install a
-    // journal hook? No — cheap version: sample [0x8019E150] + -31388 at
-    // every 189FC hit (first-8 already logged) AND at every 1AF64 hit
-    // (above). If [ptr] ever !=0, the success path ran. The journal
-    // (ppc_set_mem_write_journal) is the precise tool if sampling
-    // misses it — wire it only if needed.
     // fzEYzb9: 16C94 (dispatched entry) encloses the native 16D50
     // flag-setter tail (flag-31592=1 + flag-31560=1). Fires => setter
     // runs; dump the flag to confirm it lands.
@@ -1492,7 +1721,7 @@ int recomp_init(const char* dol_path) {
     g_inited = 1;
     return 1;
 }
-void recomp_shutdown(void){ ppc_set_gather_pipe(NULL,NULL,NULL,NULL,NULL); if(g_inited){ cpu_free(&g_cpu); g_inited=0; } }
+void recomp_shutdown(void){ ppc_set_gather_pipe(NULL,NULL,NULL,NULL,NULL); ppc_set_mem_write_journal(NULL,NULL); if(g_inited){ cpu_free(&g_cpu); g_inited=0; } }
 void recomp_flush_gp(void){ if(g_inited && s_gp_ptr != s_gp_base_ptr) gp_flush(NULL); }
 static void poke16_set(uint32_t addr, uint16_t bits){ uint8_t* h=NULL; if(addr>=GC_RAM_BASE && addr<GC_RAM_BASE+g_cpu.ram_size) h=g_cpu.ram+(addr-GC_RAM_BASE); else if(addr>=GC_RAM_UNCACHED && addr<GC_RAM_UNCACHED+g_cpu.ram_size) h=g_cpu.ram+(addr-GC_RAM_UNCACHED); if(h){ uint16_t cur=(uint16_t)(h[0]<<8|h[1]); cur|=bits; h[0]=(uint8_t)(cur>>8); h[1]=(uint8_t)(cur&0xFF); } }
 static void poke16_clr(uint32_t addr, uint16_t bits){ uint8_t* h=NULL; if(addr>=GC_RAM_BASE && addr<GC_RAM_BASE+g_cpu.ram_size) h=g_cpu.ram+(addr-GC_RAM_BASE); else if(addr>=GC_RAM_UNCACHED && addr<GC_RAM_UNCACHED+g_cpu.ram_size) h=g_cpu.ram+(addr-GC_RAM_UNCACHED); if(h){ uint16_t cur=(uint16_t)(h[0]<<8|h[1]); cur&=~bits; h[0]=(uint8_t)(cur>>8); h[1]=(uint8_t)(cur&0xFF); } }
@@ -1554,14 +1783,11 @@ void recomp_run_slice(void){
         if(pc==0x800113B8u && g_cpu.ctr>8) g_cpu.ctr=1;
         else if(pc==0x800034E4u && g_cpu.gpr[3]>256u) g_cpu.gpr[3]=256u;
         // (was: 0x80011424 timebase += 5000 wall-clock hack — removed per M0.)
-        if(pc==0x8000B450u) poke16_set(g_cpu.gpr[31], 0x0020u);
-        else if(pc==0x8000B498u) poke16_set(g_cpu.gpr[31], 0x0020u);
-        else if(pc==0x8000B4B4u) poke16_clr(g_cpu.gpr[31], 0x0400u);
-        else if(pc==0x8000B4D4u) poke16_set(g_cpu.gpr[30], 0x8000u);
-        else if(pc==0x8000B3ECu) poke16_clr(g_cpu.gpr[31], 0x0001u);
-        else if(pc==0x8000B508u) poke16_clr(g_cpu.gpr[31], 0x0001u);
-        else if(pc==0x8001BD10u){ poke32_set(g_cpu.gpr[13]-31352u, 0u); poke32_set(g_cpu.gpr[13]-31348u, 0u); }
-        else if(pc==0x8000B578u) poke16_clr(g_cpu.gpr[31], 0x0001u);
+        // (was: DSP hand-shake pokes at B450/B498/B4B4/B4D4/B3EC/B508/B578 —
+        // removed. The DSP/AI MMIO chassis above now serves the real register
+        // state; the guest's own sth/lhz hand-shake runs native. Per-PC pokes
+        // are banned anti-patterns (PLAN) regardless of outcome.)
+        if(pc==0x8001BD10u){ poke32_set(g_cpu.gpr[13]-31352u, 0u); poke32_set(g_cpu.gpr[13]-31348u, 0u); }
         else if(pc==0x8001071Cu) poke32_set(g_cpu.gpr[13]-31688u, 1u);
         else if(pc==0x8001072Cu) poke32_set(g_cpu.gpr[13]-31688u, 1u);
 
