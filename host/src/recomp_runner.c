@@ -1568,39 +1568,30 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // lr names the caller; r7 bit3 (from the VI field-status polls) decides
     // 1A5F8->1A5FC vs 1A600. Fires => waker chain entered; never => dead.
     if(addr==0x8001A55Cu){
-      // fzEYzb76: dump r13 + waitword: 1A618's stw is r13-relative; if r13
-      // here differs from the waiter's r13 the wake lands elsewhere.
-      // fzEYzb77: ALSO dump the VI halfwords the frame polls (DI0 @0x30,
-      // +0x34/+0x38/+0x3C): the 1A588/1A5A4/1A5C0/1A5DC polls test bit15
-      // (0x8000) of each; set-bit => r7 ori => gate takes the 1A600
-      // no-wake side. Our model may leave guest-written config bits stuck.
       static unsigned _n=0; if(++_n<=6){ uint32_t w=0xDEADu;
         guest_read32(cpu->gpr[13]-31388u,&w);
-        u64 v30=0,v34=0,v38=0,v3c=0;
-        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002030u, 2u, &v30);
-        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002034u, 2u, &v34);
-        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002038u, 2u, &v38);
-        dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC00203Cu, 2u, &v3c);
-        fprintf(stderr,"[dvdsm] 1A55C-waker-entry r3=0x%08X r4=0x%08X r13=0x%08X waitword=%u VI30=%04X VI34=%04X VI38=%04X VI3C=%04X lr=0x%08X (#%u)\n",
-          cpu->gpr[3], cpu->gpr[4], cpu->gpr[13], w,
-          (unsigned)v30&0xFFFFu, (unsigned)v34&0xFFFFu,
-          (unsigned)v38&0xFFFFu, (unsigned)v3c&0xFFFFu, cpu->lr, _n); }
+        fprintf(stderr,"[dvdsm] 1A55C-waker-entry r3=0x%08X r4=0x%08X r13=0x%08X waitword=%u lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], cpu->gpr[13], w, cpu->lr, _n); }
       return false; }
-    // fzEYzb75: 1A5F0/1A5F8/1A5F4/1A5FC/1A600/1A60C gate resolution.
-    // 1A5F0 (downcount): reads r7 bit2 — first-6 dump r7+sides.
-    // 1A5F8 (downcount): reads r7 bit3. 1A5F4/1A5FC (native bc) never
-    // dispatch; 1A600/1A60C (downcount) are the taken/fallthrough
-    // continuations: 1A600 fires = no-wake side, 1A60C fires = waker
-    // side => 1A618 increment runs natively a few insns later. Log
-    // continuations uncapped (they ARE the gate outcome).
-    if(addr==0x8001A5F0u||addr==0x8001A5F8u||addr==0x8001A600u||addr==0x8001A60Cu){
-      static unsigned _g1=0,_g2=0,_g3=0,_g4=0;
-      unsigned *c=addr==0x8001A5F0u?&_g1:addr==0x8001A5F8u?&_g2:addr==0x8001A600u?&_g3:&_g4; (*c)++;
-      if(*c<=6||addr==0x8001A600u||addr==0x8001A60Cu){
-        if(*c<=200||addr==0x8001A600u||addr==0x8001A60Cu)
-          fprintf(stderr,"[dvdsm] %s r7=0x%08X lr=0x%08X (#%u)\n",
-            addr==0x8001A5F0u?"1A5F0-bit2":addr==0x8001A5F8u?"1A5F8-bit3":addr==0x8001A600u?"1A600-NOWAKE":"1A60C-WAKE",
-            cpu->gpr[7], cpu->lr, *c); }
+    // fzEYzb75: 1A600 (no-wake side) / 1A60C (waker side) are the
+    // post-downcount RESUME pcs *if* the 1A55C frame's budget splits them
+    // across chunks. They never fire (6x 1A55C entries, 0x 1A600/1A60C):
+    // the frame runs entry->1A628 natively in ONE dolrecomp_call, so the
+    // gate outcome is journal-visible only (does 1A618's stw land?).
+    // fzEYzb80 answered via the [vi] poll-read trace + r7 reconstruction:
+    // polls return 0x9107/0x9001/0x0/0x0 => bits set in sequence:
+    // 1A584: 0x9107&0x8000 SET => r7|=1 (bit0)
+    // 1A5A4: 0x9001&0x8000 SET => r7|=2 (bit1)
+    // 1A5C0: 0x0000 CLEAR => r7 bit2 stays 0
+    // 1A5DC: 0x0000 CLEAR => r7 bit3 stays 0 => r7=0x3
+    // 1A5F0 tests bit2 (0x4): CLEAR => fall to 1A600 (BE00, no-wake side)
+    // 1A5F8 never reached on this path => 1A618 waker never runs.
+    if(addr==0x8001A600u||addr==0x8001A60Cu){
+      static unsigned _g3=0,_g4=0;
+      unsigned *c=addr==0x8001A600u?&_g3:&_g4; (*c)++;
+      if(*c<=6) fprintf(stderr,"[dvdsm] %s r7=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x8001A600u?"1A600-NOWAKE":"1A60C-WAKE",
+        cpu->gpr[7], cpu->lr, *c);
       return false; }
     // fzEYzb68b: 1A618 (dispatched, has downcount) is the wait-word
     // INCREMENTER (stw [r13-31388]+1). Fires => the 1A5FC gate took the
@@ -2373,6 +2364,13 @@ void recomp_run_slice(void){
         // Retrace => +675000 timebase ticks + VI status bit asserted.
         // Interrupt delivery stays parked (s_os_dispatch_interrupt==0) so
         // VIWaitForRetrace-style loops observe level-triggered pending.
+        // fzEYzb79: on each retrace ALSO advance the VI position/compare
+        // model (Dolphin VideoInterface.cpp: IR_INT sets when the half-line
+        // counter reaches the VCT/HCT programmed in each INTSR; our
+        // interrupts.c has no position counter, so bit15 of the halfword
+        // the 1A55C waker polls never sets and r7 stays 0 => the waker
+        // gate never takes the 1A60C side). Toggle even/odd field per
+        // retrace so both 0x30/0x34 reads report a live beam.
         { static unsigned long long _rt=0; if(++_rt==1||_rt%2000000==0){
           uint32_t d4=0; guest_read32(0x800000D4u,&d4);
           fprintf(stderr,"[irq] retrace#%llu DIpend=%d ext=%d EE=%d mask=0x%08X cause=0x%08X D4=0x%08X disp=0x%08X\n",
