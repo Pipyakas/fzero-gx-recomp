@@ -1591,11 +1591,10 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[dvdsm] 1A55C-waker-entry r3=0x%08X r4=0x%08X r13=0x%08X waitword=%u lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->gpr[4], cpu->gpr[13], w, cpu->lr, _n); }
       return false; }
-    // fzEYzb75: 1A600 (no-wake side) / 1A60C (waker side) are the
-    // post-downcount RESUME pcs *if* the 1A55C frame's budget splits them
-    // across chunks. They never fire (6x 1A55C entries, 0x 1A600/1A60C):
-    // the frame runs entry->1A628 natively in ONE dolrecomp_call, so the
-    // gate outcome is journal-visible only (does 1A618's stw land?).
+    // fzEYzb75: 1A600 (no-wake side, downcount) vs 1A60C (waker side,
+    // NATIVE fallthrough of the 1A5FC bc — never dispatches). 1A600 fires
+    // iff the 1A5F4 gate fell through (r7 bit2 clear). The 1A60C side is
+    // journal-visible only (does 1A618's stw land with pc=1A618?).
     // fzEYzb84 (answered — filtered [vi] waker-ACK trace): each entry ACKs
     // exactly 2 INTSRs (0x2030->0x1107 at 1A590, 0x2034->0x1001 at 1A5AC),
     // i.e. reads bit15-SET at 1A584/1A5A4 => r7=0x3 (bits 0,1). INTSR2/3
@@ -1620,9 +1619,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _m=0; if(++_m<=6) fprintf(stderr,"[dvdsm] 3458-memset r3=0x%08X r4=0x%08X r5=%u lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->lr, _m);
       return false; }
-    // fzEYzb68b: 1A618 (dispatched, has downcount) is the wait-word
-    // INCREMENTER (stw [r13-31388]+1). Fires => the 1A5FC gate took the
-    // taken leg => 1A628 runs natively next (same frame). Dump word+r7.
+    // fzEYzb68b: 1A618 is a NATIVE stw inside the 1A55C frame (no downcount:
+    // 1A60C/1A610/1A614/1A618 run as one stretch to the 1A61C bl) — it can
+    // NEVER dispatch, like all mid-chain natives. The gate outcome is
+    // journal-visible ONLY: the waitword slot fires with 1A618's pc iff
+    // the 1A5FC gate took the waker side. (An old note claimed 1A618 was
+    // dispatched — wrong; it has no downcount line in the chunk.)
     if(addr==0x8001A618u){
       static unsigned _n=0; if(++_n<=6){ uint32_t w=0xDEADu;
         guest_read32(cpu->gpr[13]-31388u,&w);
