@@ -1501,6 +1501,26 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[wait2] 309FC-display r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->gpr[4], cpu->lr, _d);
       return false; }
+    // fzEYzb117: post-waiter2 park (320F0) + 70068/700B4 display chain.
+    // 320F0 (dispatched, downcount) copies VI [r13-30708]+0 live bits into
+    // gx vars [r2-32232]+12 + stb flags to r3/r4/r5/r6/r7; returns via
+    // 3213C blr. lr names the 700xx caller. If flag-30632 flips but 320F0
+    // never advances past 3213C, the NEXT waiter (32140 mulli gate?) parks.
+    // 70068/700B4 (dispatched entries) = the GX chain the game path runs
+    // after the park (70068 via 6FD5C bl, 700B4 via 6FD58 bl).
+    if(addr==0x800320F0u){
+      static unsigned _p=0; if(++_p<=6){ uint32_t vi=0xDEADu,gx=0xDEADu;
+        guest_read32(cpu->gpr[13]-30708u,&vi); guest_read32(cpu->gpr[2]-32232u,&gx);
+        fprintf(stderr,"[wait3] 320F0-park VIptr=0x%08X gxbase=0x%08X lr=0x%08X (#%u)\n",
+          vi, gx, cpu->lr, _p); }
+      return false; }
+    if(addr==0x80070068u||addr==0x800700B4u){
+      static unsigned _g1=0,_g2=0;
+      unsigned *c=addr==0x80070068u?&_g1:&_g2; (*c)++;
+      if(*c<=4) fprintf(stderr,"[wait3] %s r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x80070068u?"70068":"700B4",
+        cpu->gpr[3], cpu->gpr[4], cpu->lr, *c);
+      return false; }
     // fzEYzb106: second waiter frame (3416C) + flag writer (34488/344A0).
     // 3416C runs 33E20-worker then parks 110A8 on queue r13-30628 until
     // byte r13-30632 flips (341C4 lbz poll); 34488-frame (3448C li r3,1)
