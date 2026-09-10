@@ -1434,12 +1434,15 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(*c<=4) fprintf(stderr,"[sleep] RET-%05X r3=0x%08X r31=0x%08X lr=0x%08X (#%u)\n",
         addr&0xFFFFFu, cpu->gpr[3], cpu->gpr[31], cpu->lr, *c);
       return false; }
-    // fzEYzb106: second waiter frame (3416C) + flag writer (344A0).
+    // fzEYzb106: second waiter frame (3416C) + flag writer (34488/344A0).
     // 3416C runs 33E20-worker then parks 110A8 on queue r13-30628 until
-    // byte r13-30632 flips (341C4 lbz poll); 344A0 files that byte
-    // (r3=1) from the video/display path + a blrl hook + 11194 waiter
-    // link. If 341C0 entries grow but the byte stays 0, the writer path
-    // never runs — same signature as the first waiter pre-fix.
+    // byte r13-30632 flips (341C4 lbz poll); 34488-frame (3448C li r3,1)
+    // files that byte at 344B8 (stb r3) from display path 30988 + boot
+    // path 6FCD0. 30636 = hook (3445C lwz r31 / 34464 stw r30 chain-links
+    // it — the new hook value chains via r30). 30640 = second hook the
+    // same way (34390/34398/343D4/343F8). 34444 = the 30636-setter frame
+    // (NOT the flag writer). If 341C4-poll count grows but the byte stays
+    // 0, 34488 never runs — same signature as the first waiter pre-fix.
     if(addr==0x8003416Cu){
       static unsigned _c=0; if(++_c<=4){ uint32_t fl=0xDEADu;
         guest_read32(cpu->gpr[13]-30632u,&fl);
@@ -1456,17 +1459,37 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           fl, cpu->lr, _w); }
       return false; }
     // (344A0 itself is NATIVE — the 344xx frame's dispatched entries are
-    // 34444/34464/3446C/34488. Probe 34444 = frame entry: r3 names the
-    // flag value that 344B8 will stb.)
+    // 34444/34464/3446C/34488. Probe 34444 = 30636-setter entry (NOT the
+    // flag writer); 34488 = flag-writer entry (r3=1 filed at 344B8).
+    // 34444's r3 = the new 30636 hook (chains via r30 at 34464).)
     if(addr==0x80034444u){
-      static unsigned _s=0; if(++_s<=4)
-        fprintf(stderr,"[wait2] 34444-entry r3=%u r4=0x%08X lr=0x%08X (#%u)\n",
-          cpu->gpr[3], cpu->gpr[4], cpu->lr, _s);
+      static unsigned _s=0; if(++_s<=4){ uint32_t h=0xDEADu;
+        guest_read32(cpu->gpr[13]-30636u,&h);
+        fprintf(stderr,"[wait2] 34444-setter r3=0x%08X oldhook30636=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], h, cpu->gpr[4], cpu->lr, _s); }
+      return false; }
+    if(addr==0x80034488u){
+      static unsigned _s3=0; if(++_s3<=4){ uint32_t h=0xDEADu;
+        guest_read32(cpu->gpr[13]-30636u,&h);
+        fprintf(stderr,"[wait2] 34488-flagwrite r3=%u hook30636=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], h, cpu->gpr[4], cpu->lr, _s3); }
       return false; }
     if(addr==0x800344A0u){
       static unsigned _s2=0; if(++_s2<=4)
         fprintf(stderr,"[wait2] 344A0-flagwrite r3=%u lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->lr, _s2);
+      return false; }
+    // fzEYzb107: 341BC = the poll-LOOP head (addi queue + bl 110A8 +
+    // lbz flag): dispatched every lap. 341C4 never fires post-first-lap
+    // because the 110A8 bl never returns post-first-lap (thread re-sleeps
+    // inside 105D0 each lap — same as waiter-1 pre-fix). So count 341BC
+    // laps (= 110A8 sleeps) and sample the flag word there.
+    if(addr==0x800341BCu){
+      static unsigned _b=0; _b++;
+      if(_b<=4||_b%5000000==0){ uint32_t fl=0xDEADu;
+        guest_read32(cpu->gpr[13]-30632u,&fl);
+        fprintf(stderr,"[wait2] 341BC-lap flag30632=0x%08X r3=0x%08X lr=0x%08X (#%u)\n",
+          fl, cpu->gpr[3], cpu->lr, _b); }
       return false; }
     if(addr==0x800341C4u){
       static unsigned _p=0; _p++;
