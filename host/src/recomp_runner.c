@@ -2130,14 +2130,19 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     if(addr==0x80016DF8u||addr==0x8001687Cu||addr==0x80019354u||addr==0x80019430u||addr==0x80016394u){
       static unsigned _d1=0,_d2=0,_d3=0,_d4=0,_d5=0;
       unsigned *c=addr==0x80016DF8u?&_d1:addr==0x8001687Cu?&_d2:addr==0x80019354u?&_d3:addr==0x80019430u?&_d4:&_d5; (*c)++;
-      // fzEYzb128 (answered probe153 — 16DF8 FIRES x2, r3 = the path
-      // string): BOTH calls return -1 (17180-entry r3=-1 x2), so the
-      // FST lookup FAILS for both the game path (0x801A63C4) and the
-      // second path (0x80095EA0). The .data FST region the guest reads
-      // (0x80095EA0 = our DOL .data d3!) has no valid entry for these
-      // paths — the side-effect FST at 0x81200000 (102AC) is what 16DC0
-      // indexed at boot, but 16DF8 reads the DISC FST (fst.bin @0x80000038
-      // -> 0x81200000?) or the .data copy. Dump r3 bytes to see the path.
+      // fzEYzb128 (answered probe153 + DOL-decode: 16DF8 FIRES x2, both
+      // return -1). Call#1 path @0x801A63C4 (BSS-built: 1747C builds it
+      // char-by-char with the 0x2F-terminator loop — a REL path like
+      // "fze.xxx.rel/", never in the DOL disc). Call#2 path = the STATIC
+      // string at 0x80095EA0 = "fze.sample.rel" (DOL .data d3, EXI2_Init
+      // log region). NEITHER is in the DOL's own FST (the 16DF8 FST root
+      // is the BOOT disc image: main.dol + fze.*.rel live in the .rvz
+      // tree, but the side-effect FST at 0x81200000 was built from
+      // fst.bin = the EXTRACTED tree whose root layout differs). So the
+      // lookup correctly returns -1 for both: the game asks for REL
+      // files by name, and the HLE FST doesn't contain them. The fix is
+      // the FST/dvd_host layer (serve REL names from the tree), NOT the
+      // lookup. Dump r3 bytes to confirm the path strings.
       if(*c<=4){ uint32_t r4=cpu->gpr[4]; char pb[24]; pb[0]=0;
         if(cpu->gpr[3]>=GC_RAM_BASE){ uint8_t* p=g_cpu.ram+(cpu->gpr[3]-GC_RAM_BASE);
           int n=0; for(;n<23;n++){ if(p+n>=g_cpu.ram+g_cpu.ram_size) break; char ch=(char)p[n]; if(!ch) break; pb[n]=(ch>=32&&ch<127)?ch:'.'; } pb[n]=0; }
@@ -2498,7 +2503,14 @@ void recomp_run_slice(void){
         if(false && s_same>256){ if(g_cpu.ctr>0) g_cpu.ctr--; g_cpu.pc+=4; s_same=0; continue; }
         if(pc==0xC00u){ g_cpu.pc=g_cpu.srr0; g_cpu.exception=0; g_cpu.program_exception=0; continue; }
         if(pc>=0x200 && pc<0xD00){ ppc_rfi(&g_cpu, pc); g_cpu.exception=0; g_cpu.program_exception=0; continue; }
-        if((pc==0x8000B670u || pc==0x8000B750u || pc==0x8000B7C4u) && g_cpu.ctr>4) g_cpu.ctr=1;
+        // fzEYzb129 (cpdc loop clamp — same class as the B670/B750/B7C4
+        // clamps above: guest cache-block loops whose ctr derives from a
+        // heap-table match that can never succeed before the first DVD
+        // READ). B6A0's ctr = ((len+lowbits)+31)>>27: with the 858E4 poke
+        // the C49C memcpy proceeds, but EVERY dcbst loop (B684-callers)
+        // inherits a huge ctr from a zero-length/empty range and spins
+        // 100M+ iterations per dispatch slice. Clamp like the others.
+        if((pc==0x8000B670u || pc==0x8000B750u || pc==0x8000B7C4u || pc==0x8000B6A0u) && g_cpu.ctr>4) g_cpu.ctr=1;
         else if(pc==0x80010608u && g_cpu.gpr[6]==0) g_cpu.gpr[6]=1;
         if(pc==0x800113B8u && g_cpu.ctr>8) g_cpu.ctr=1;
         else if(pc==0x800034E4u && g_cpu.gpr[3]>256u) g_cpu.gpr[3]=256u;
