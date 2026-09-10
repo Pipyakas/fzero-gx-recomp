@@ -1438,6 +1438,24 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(*c<=4) fprintf(stderr,"[sleep] RET-%05X r3=0x%08X r31=0x%08X lr=0x%08X (#%u)\n",
         addr&0xFFFFFu, cpu->gpr[3], cpu->gpr[31], cpu->lr, *c);
       return false; }
+    // fzEYzb109: 34378 hook-frame (30640-setter) + 309FC pre-display
+    // frame. 34378 is the DIRECT 30640-setter (chains via r30 at 34398);
+    // 309xx display path runs 34378 THEN 34444 — so WHICH runs tells
+    // whether the display path reached the 30980-leg. 309FC runs 3450C
+    // (IRQ-table registrant) then GX display work; its lr (707FC =
+    // game path vs other = display path) names the caller. Both fire
+    // BEFORE 3416C's park, so ordering vs 3416C-entry maps the race.
+    if(addr==0x80034378u){
+      static unsigned _h=0; if(++_h<=4){ uint32_t h=0xDEADu;
+        guest_read32(cpu->gpr[13]-30640u,&h);
+        fprintf(stderr,"[wait2] 34378-hookset r3=0x%08X oldhook30640=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], h, cpu->gpr[4], cpu->lr, _h); }
+      return false; }
+    if(addr==0x800309FCu){
+      static unsigned _d=0; if(++_d<=4)
+        fprintf(stderr,"[wait2] 309FC-display r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], cpu->lr, _d);
+      return false; }
     // fzEYzb106: second waiter frame (3416C) + flag writer (34488/344A0).
     // 3416C runs 33E20-worker then parks 110A8 on queue r13-30628 until
     // byte r13-30632 flips (341C4 lbz poll); 34488-frame (3448C li r3,1)
@@ -1693,6 +1711,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _n=0; if(++_n<=8) fprintf(stderr,"[dvdsm] D9CC-dispatch r3=%u r4=0x%08X msr=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->gpr[4], cpu->msr, cpu->lr, _n);
       return false; }
+    // fzEYzb110 (answered probe134 — 0 hits across 8 D9CC runs): the
+    // D9CC table-walk interior (DC90/DCA4/DCC4/DCEC) NEVER dispatches —
+    // native stretch from D9CC entry through the DCD8 blrl, same class as
+    // 1A600/1A60C. Handler identity is proven instead by 1A55C entries
+    // with lr=DCDC (the blrl return address): 1A55C IS the selected
+    // handler, called directly by the dispatcher. Probe removed.
     // fzEYzb72b: 1B42C entry (dispatched) = the 706E4 file-load waiter that
     // must return for the 706EC done-flag store to run. lr names caller.
     if(addr==0x8001B42Cu){
