@@ -2382,6 +2382,23 @@ static int load_dol(const char* path, CPUState* cpu) {
         // word and the boot PSL would diverge from hardware.
         POKE32(0x800000F8u, 0x09A7EC80u); POKE32(0x800000FCu, 0x1CF7C580u);
         cpu->gpr[1] = 0x817FFF00u; POKE32(0x817FFF00u, 0u); POKE32(0x817FFF04u, 0u);
+        // fzEYzb130: pre-install the real FST blob @0x81200000 + seed
+        // [0x80000038] BEFORE first dispatch (same bytes the 102AC
+        // side-effect installs). On HW the apploader does this: 16DC0's
+        // single boot run (lr=1779C) loads [0x80000038] into -31516 and
+        // early-outs at 16DD8 when it is 0 — leaving -31516/-31508/-31512
+        // zero, so every 16DF8 lookup returns -1, 174B8 never files
+        // -31504, the 174D0 frame takes the 17520 fatal leg, and C49C's
+        // walk exits to the C5A4 sync-idle hang (A000-spin lr=C5A8).
+        // Seeding here makes 16DC0's one run file the LIVE root.
+        { extern int dvd_build_fst_from_tree(uint8_t* ram, unsigned ram_size, unsigned base);
+          if(cpu->ram_size >= 0x1200010u){
+              uint32_t base=0x81200000u; uint32_t off=base - GC_RAM_BASE;
+              if(off+16 <= cpu->ram_size){
+                  int n = dvd_build_fst_from_tree(cpu->ram, cpu->ram_size, base);
+                  if(n > 0) POKE32(0x80000038u, base);
+              }
+          } }
     }
     #undef POKE32
     // IPL handoff: synthesize the initial thread the apploader hands the
