@@ -51,15 +51,17 @@ static unsigned s_watch_tot[7] = {0,0,0,0,0,0,0};
 static unsigned s_watch_nz[7] = {0,0,0,0,0,0,0};
 static void watch_journal(u32 offset, u32 size, void* user){
     (void)size;
-    // fzEYzb86: report the VALUE WRITTEN, not the post-write word image.
-    // The old code read the 4-byte word back AFTER the store landed, so a
-    // memset burst (stw r7,4(r4) word-fills) reported the fill pattern's
-    // residue (now=1) instead of the actual stored value (0). Reconstruct
-    // it: for a fully-covered 4-byte slot the written value is exactly the
-    // journal payload — but the hook only passes (offset,size), so read the
-    // word and mask to the written bytes: partial (1-2B) stores only
-    // change their bytes; the REST is stale image, not written data.
-    // Fully-covered 4B stores report the word as-is (exact). Anything else
+    // fzEYzb100: the journal fires PRE-write (ppc_journal_ram_write runs
+    // BEFORE write_be32 in cpu.c), so the word image read here is the
+    // PRE-store value, not post-store. All "now=" values are pre-images:
+    // now=1 at pc=34E4 means memset OVERWROTE a 1 with fill (0) — the
+    // actual stored value is the fill, not 1. The 64 "nonzero" hits were
+    // pre-existing 1s being zeroed, never waker stores. The pc= field is
+    // likewise the CHUNK-ENTRY pc (journal fires before the chunk sets
+    // ctx->pc per label... precisely: journal time pc = whatever the last
+    // dispatched label set). Conclusion stands but reasoning corrected:
+    // no post-write 1 has ever been observed in the waitword.
+    // Fully-covered 4B stores report the word as-is. Anything else
     // reports the covered bytes + a '%' suffix meaning "rest is image".
     for(int i=0;i<7;i++)
         if(s_watch_off[i]!=0xFFFFFFFFu && offset < s_watch_off[i]+4u && s_watch_off[i] < offset+size){
@@ -81,12 +83,15 @@ static void watch_journal(u32 offset, u32 size, void* user){
             s_watch_tot[i]++;
             int _is_nz = (v!=0 && v!=0xDEADu);
             int _uncap = (i==1 && _is_nz);
-            // fzEYzb97: log the journal WRITE pc for slot1 nonzero hits
-            // (g_cpu.pc at journal time). Inside a dolrecomp_call the cpu
-            // pc is the native instruction's pc (chunks set ctx->pc per
-            // label), so pc=1A618 here would PROVE the waker store landed.
-            // All 170 hits show pc=34E4/1AB1C — never 1A618 — confirming
-            // the journal never observes the waker store.
+            // fzEYzb97: the pc= field is the chunk-ENTRY pc (journal is
+            // pre-write AND pre-label-pc-set), so it cannot name the native
+            // store instruction — 34E4/1AB1C are just the entries whose
+            // native stretches contain the memset/clearer stores. The
+            // 1A618 proof must come from the WAKER-LR bl continuations
+            // (BFC8 lr=1A620 + BE00 lr=1A628 fire 6/6) — which we have —
+            // plus a post-frame READ of the word. The entry probe already
+            // reads it (waitword=0 at every 1A55C entry, both before and
+            // after entries that provably ran the 1A618 side).
             if(s_watch_tot[i]<=8 || s_watch_tot[i]%50000==0 ||
                (_is_nz && (s_watch_nz[i]<64 || _uncap))){
                 if(_is_nz) s_watch_nz[i]++;
@@ -1662,14 +1667,39 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // fzEYzb95b: DECISIVE gate probe. Both gate sides call out via bl
     // (=> dispatch => observable): no-wake side calls BE00 with lr=1A608;
     // waker side calls BFC8 (lr=1A620) then BE00 (lr=1A628). lr names the
-    // side unambiguously. Log ONLY lr in the 1A600-1A640 window (BE00/BFC8
-    // are hot OS primitives — first-12-each cap burned on boot traffic).
+    // side unambiguously.
+    // fzEYzb95c (ANSWERED — BFC8 lr=1A620 + BE00 lr=1A628 fire 6/6 waker
+    // entries): the gate DOES take the waker side every entry. But the
+    // journal never observes the 1A618 stw (0 pc=1A618 hits in 170+
+    // waitword writes) while the 1A640-fallthrough BFC8 (lr=1A750) ALSO
+    // fires — meaning 1A744 took the fnptr-NULL leg. Both observations
+    // together: the 1A618 stw executes (native, journal sees the store...
+    // or DOES it?) yet the word reads back unchanged. NEXT fzEYzb100:
+    // is the stw's EA the watched word at all? Dump r13 (waker frame)
+    // vs the armed waitword EA: the 1A60C lwz/addi/stw sequence uses
+    // r13 — if the frame's r13 differs from the waiter's, the store
+    // lands elsewhere. Entry probe already logs r13; add the 1A610-load
+    // values via the BFC8 r3/r4 dump below.
     if(addr==0x8000BE00u||addr==0x8000BFC8u){
+      // fzEYzb98: dump GPR[1..7] — the 1A60C path passes r3=[sp+24] into
+      // BFC8 and r3/r4 into the BE00 calls; register state at the BFC8
+      // entry (probed pre-body) reveals what 1A610/1A614 loaded and
+      // whether r4 (the waitword old value) was sane. Cap 4 per side.
+      // fzEYzb98b: counters increment ONLY on window hits (an earlier
+      // revision incremented on every BE00/BFC8 call, so boot traffic
+      // burned the *c<=4 cap before the first waker entry).
+      // fzEYzb99: window widened to 1A600-1A770 — the 1A640-fallthrough
+      // BFC8 (lr=1A750, fnptr-NULL leg) is as informative as the waker
+      // legs (lr=1A620/1A628): it distinguishes "fnptr null" from
+      // "waker never ran".
       static unsigned _b1=0,_b2=0;
-      unsigned *c=addr==0x8000BE00u?&_b1:&_b2; (*c)++;
-      if(cpu->lr>=0x8001A600u && cpu->lr<=0x8001A640u)
-        fprintf(stderr,"[dvdsm] %s-WAKER-LR lr=0x%08X r3=0x%08X r4=0x%08X\n",
-          addr==0x8000BE00u?"BE00":"BFC8", cpu->lr, cpu->gpr[3], cpu->gpr[4]);
+      if(cpu->lr>=0x8001A600u && cpu->lr<=0x8001A770u){
+        unsigned *c=addr==0x8000BE00u?&_b1:&_b2; (*c)++;
+        if(*c<=4)
+          fprintf(stderr,"[dvdsm] %s-WAKER-LR lr=0x%08X r1=0x%08X r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X\n",
+            addr==0x8000BE00u?"BE00":"BFC8", cpu->lr, cpu->gpr[1],
+            cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6], cpu->gpr[7]);
+      }
       return false; }
     // fzEYzb83: memset entry (dispatched). The journal's 64 nonzero
     // waitword hits (now=1 at pc=34E4) are memset's word-fill pattern, not
