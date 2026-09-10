@@ -1647,13 +1647,13 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // Dump both: entry args + which side the frame resolves to. 17520
     // firing with r29=1358 proves the FST fix landed but the bounds leg
     // still rejects; 17508 (non-fatal) firing proves advance.
-    if(addr==0x800174D0u||addr==0x80017520u||addr==0x80017508u||addr==0x80017578u){
-      static unsigned _e=0,_f=0,_n=0,_h=0;
-      unsigned *c=addr==0x800174D0u?&_e:addr==0x80017520u?&_f:addr==0x80017508u?&_n:&_h; (*c)++;
+    if(addr==0x800174D0u||addr==0x80017520u||addr==0x80017508u||addr==0x80017578u||addr==0x800175C0u||addr==0x80017590u||addr==0x80006384u){
+      static unsigned _e=0,_f=0,_n=0,_h=0,_c=0,_s=0,_8=0;
+      unsigned *c=addr==0x800174D0u?&_e:addr==0x80017520u?&_f:addr==0x80017508u?&_n:addr==0x80017578u?&_h:addr==0x800175C0u?&_c:addr==0x80017590u?&_s:&_8; (*c)++;
       if(*c<=4){ uint32_t d52=0xDEADu;
         if(addr!=0x800174D0u) guest_read32(cpu->gpr[26]+52u,&d52);
         fprintf(stderr,"[wait4] %s r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X r8=0x%08X r26=0x%08X r29=%u [r26+52]=%u lr=0x%08X (#%u)\n",
-          addr==0x800174D0u?"174D0-entry":addr==0x80017520u?"17520-FATAL":addr==0x80017508u?"17508-live":"17578-RET19354",
+          addr==0x800174D0u?"174D0-entry":addr==0x80017520u?"17520-FATAL":addr==0x80017508u?"17508-live":addr==0x80017578u?"17578-RET19354":addr==0x800175C0u?"175C0-fzeprog":addr==0x80017590u?"17590-175A8slot":addr==0x80006384u?"6384-postwake":"?",
           cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6],
           cpu->gpr[7], cpu->gpr[8], cpu->gpr[26], cpu->gpr[29], d52, cpu->lr, *c); }
       return false; }
