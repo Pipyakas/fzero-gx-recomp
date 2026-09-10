@@ -44,11 +44,14 @@ static u64 g_tb = 0;
 // the 179DC clear leg executes), [6]=-30422 gate2 done-flag byte's word
 // (fzEYzb85: 706EC stb r0=1 files it AFTER 1B42C returns; the game path's
 // 706E4->1B42C is what must start returning nonzero for the boot to
-// advance past the DVD-wait stage).
-static u32 s_watch_off[7] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
-static const char* s_watch_nm[7] = {"gate2word", "waitword31388", "curblk31488", "fnptr31372", "m52drv", "m56drv", "doneflag30422"};
-static unsigned s_watch_tot[7] = {0,0,0,0,0,0,0};
-static unsigned s_watch_nz[7] = {0,0,0,0,0,0,0};
+// advance past the DVD-wait stage), [7]=-30632 waiter-2 flag byte's word
+// (fzEYzb113: 341A4 stb r0=0 clears pre-park, 34148 stb r31 pre-worker,
+// 344B8 stb r3 files post-display; the 34488 probe can never observe the
+// native 344B8 store, so the journal is the ONLY witness of the write).
+static u32 s_watch_off[8] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
+static const char* s_watch_nm[8] = {"gate2word", "waitword31388", "curblk31488", "fnptr31372", "m52drv", "m56drv", "doneflag30422", "wait2flag30632"};
+static unsigned s_watch_tot[8] = {0,0,0,0,0,0,0,0};
+static unsigned s_watch_nz[8] = {0,0,0,0,0,0,0,0};
 static void watch_journal(u32 offset, u32 size, void* user){
     (void)size;
     // fzEYzb100: the journal fires PRE-write (ppc_journal_ram_write runs
@@ -63,7 +66,10 @@ static void watch_journal(u32 offset, u32 size, void* user){
     // no post-write 1 has ever been observed in the waitword.
     // Fully-covered 4B stores report the word as-is. Anything else
     // reports the covered bytes + a '%' suffix meaning "rest is image".
-    for(int i=0;i<7;i++)
+    // fzEYzb113: slot7 (wait2 flag) logs EVERY write uncapped — the byte
+    // flips at most a few times per boot, and each flip is the verdict on
+    // whether the 34488 native chain ran.
+    for(int i=0;i<8;i++)
         if(s_watch_off[i]!=0xFFFFFFFFu && offset < s_watch_off[i]+4u && s_watch_off[i] < offset+size){
             uint32_t a = GC_RAM_BASE + s_watch_off[i], v = 0xDEADu;
             int exact = (offset<=s_watch_off[i] && s_watch_off[i]+4u<=offset+size);
@@ -82,7 +88,7 @@ static void watch_journal(u32 offset, u32 size, void* user){
             // (memset) disambiguates. Volume is tiny (dozens/run).
             s_watch_tot[i]++;
             int _is_nz = (v!=0 && v!=0xDEADu);
-            int _uncap = (i==1 && _is_nz);
+            int _uncap = ((i==1 || i==7) && _is_nz);
             // fzEYzb97: the pc= field is the chunk-ENTRY pc (journal is
             // pre-write AND pre-label-pc-set), so it cannot name the native
             // store instruction — 34E4/1AB1C are just the entries whose
@@ -1375,10 +1381,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[5]=a-GC_RAM_BASE; }
         { uint32_t a=(cpu->gpr[13]-30422u)&~3u;
           if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[6]=a-GC_RAM_BASE; }
+        { uint32_t a=(cpu->gpr[13]-30632u)&~3u;
+          if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[7]=a-GC_RAM_BASE; }
         { extern void ppc_set_mem_write_journal(void (*fn)(u32,u32,void*), void* user);
           ppc_set_mem_write_journal(watch_journal, NULL); }
-        fprintf(stderr,"[watchmem] armed gate2off=0x%X waitoff=0x%X curblkoff=0x%X fnptroff=0x%X m52off=0x%X m56off=0x%X doneoff=0x%X (r13=0x%08X)\n",
-          s_watch_off[0], s_watch_off[1], s_watch_off[2], s_watch_off[3], s_watch_off[4], s_watch_off[5], s_watch_off[6], cpu->gpr[13]);
+        fprintf(stderr,"[watchmem] armed gate2off=0x%X waitoff=0x%X curblkoff=0x%X fnptroff=0x%X m52off=0x%X m56off=0x%X doneoff=0x%X wait2off=0x%X (r13=0x%08X)\n",
+          s_watch_off[0], s_watch_off[1], s_watch_off[2], s_watch_off[3], s_watch_off[4], s_watch_off[5], s_watch_off[6], s_watch_off[7], cpu->gpr[13]);
       }
       return false; }
     // fzEYzb101: waiter SAMPLE probe. 1AF8C (dispatched, downcount) is
@@ -1494,6 +1502,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // 34444/34464/3446C/34488. Probe 34444 = 30636-setter entry (NOT the
     // flag writer); 34488 = flag-writer entry (r3=1 filed at 344B8).
     // 34444's r3 = the new 30636 hook (chains via r30 at 34464).)
+    // fzEYzb112 (answered — 344BC NEVER dispatches: 0 hits across 8 D9CC
+    // runs): the flag-writer chain 34488->344B8->344BC runs native from
+    // ONE 34488 dispatch, like D9CC's DCD8 blrl. So NO probe can observe
+    // the 344B8 store firing or skipping — only its EFFECT: journal here
+    // is armed; byte -30632 read live at every 341BC-lap. If the byte
+    // flips while 34488-entry stays at 1, the writer ran; the waiter-2
+    // re-sleep is then the sleep-chain (105D0/f88), same as waiter-1
+    // pre-fzEYzb105. NEXT: journal slot for -30632 (DOL .data byte).
     if(addr==0x80034444u){
       static unsigned _s=0; if(++_s<=4){ uint32_t h=0xDEADu;
         guest_read32(cpu->gpr[13]-30636u,&h);
