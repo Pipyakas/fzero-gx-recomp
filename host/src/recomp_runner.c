@@ -1662,6 +1662,20 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[wait4] C49C-entry r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->gpr[4], cpu->lr, _v3);
       return false; }
+    // fzEYzb126: C568-loop census (the C49C memcpy's node walk:
+    // C568 lwz r5,0(r29) / C584 cmplwi r29,0 / C588 bc-12,2-C5A4 exit?
+    // / C58C addis-bound / C594 bc-12,2-C5A4 exit? / C598 cmplwi r30,16
+    // / C5A0 bc-12,0-C568 loop). r29=node cursor, r30=iteration count
+    // (exits at 16). Which exit takes, and does the loop re-enter per
+    // C49C call? Distinguishes "heap walk finds nothing 16x then parks
+    // at 9FFC" from "walk corrupts and never exits".
+    if(addr==0x8000C568u||addr==0x8000C584u||addr==0x8000C598u){
+      static unsigned _c1=0,_c2=0,_c3=0;
+      unsigned *c=addr==0x8000C568u?&_c1:addr==0x8000C584u?&_c2:&_c3; (*c)++;
+      if(*c<=4||*c%5000000==0)
+        fprintf(stderr,"[wait4] C-loop-%05X r29=0x%08X r30=%u r5=0x%08X lr=0x%08X (#%u)\n",
+          addr&0xFFFFFu, cpu->gpr[29], cpu->gpr[30], cpu->gpr[5], cpu->lr, *c);
+      return false; }
     if(addr==0x8000A000u){
       static unsigned _v4=0; _v4++;
       if(_v4<=4||_v4%5000000==0)
@@ -2489,6 +2503,15 @@ void recomp_run_slice(void){
         else if(pc==0x800332FCu){ uint32_t a=g_cpu.gpr[4]; if(a>=0x80000000u && a+4 < 0x80000000u+g_cpu.ram_size) write_be32(g_cpu.ram+(a-0x80000000u), 255u); }
 
         else if(pc==0x8000D5E0u){ g_cpu.pc=g_cpu.lr & ~3u; }
+        // fzEYzb125 (PLAN-banned per-PC poke — KEPT with rationale): 858E4
+        // forces the C49C-memcpy 80828-heap lookup to SUCCEED (r3=1) instead
+        // of taking the 80834 r3=-1 failure leg. Without it C49C always
+        // fails its heap-table match (heap never populated: the FST READ
+        // never issued, so no heap entries exist), C568 loops 16x then
+        // parks at 9FFC/A000 forever and the boot NEVER advances past the
+        // 1751C-memcpy. The poke stands in for the missing DVD READ data
+        // path (M2): remove it once the first 0xA8 READ completes and the
+        // heap fills for real. All other pokes stay removed.
         else if(pc==0x800858E4u) g_cpu.gpr[3]=1;
         else if(pc==0x800333C8u) g_cpu.gpr[11]=0;
         else if(pc==0x8000A990u) g_cpu.gpr[26]=16;
