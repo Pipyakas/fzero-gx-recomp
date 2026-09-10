@@ -1390,8 +1390,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // the arming close brace. Uncapped counter, first-8 dump.)
     if(addr==0x8001AF8Cu){
       static unsigned _s=0; _s++;
-      if(_s<=8) fprintf(stderr,"[dvdsm] 1AF8C-sample r30=%u r0=%u r3=0x%08X lr=0x%08X (#%u)\n",
-        cpu->gpr[30], cpu->gpr[0], cpu->gpr[3], cpu->lr, _s);
+      // fzEYzb108 (correction): host_call runs BEFORE the chunk, so gpr[0]
+      // here is STALE (pre-lwz, still the 110A8 lr value 0x8001AF8C — that
+      // is why r0 looked like a code pointer). Read the word from memory.
+      if(_s<=8){ uint32_t w=0xDEADu; guest_read32(cpu->gpr[13]-31388u,&w);
+        fprintf(stderr,"[dvdsm] 1AF8C-sample r30=%u word=%u r3=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[30], w, cpu->gpr[3], cpu->lr, _s); }
       return false; }
     // fzEYzb103: sleep/wake-chain probes. 110A8 always ends at 11170 bl
     // 105D0 (r3=0); the waker frame calls 11194 at 1A764 (r3=queue
