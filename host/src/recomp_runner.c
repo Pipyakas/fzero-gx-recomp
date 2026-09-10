@@ -1669,17 +1669,19 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // waker side calls BFC8 (lr=1A620) then BE00 (lr=1A628). lr names the
     // side unambiguously.
     // fzEYzb95c (ANSWERED — BFC8 lr=1A620 + BE00 lr=1A628 fire 6/6 waker
-    // entries): the gate DOES take the waker side every entry. But the
-    // journal never observes the 1A618 stw (0 pc=1A618 hits in 170+
-    // waitword writes) while the 1A640-fallthrough BFC8 (lr=1A750) ALSO
-    // fires — meaning 1A744 took the fnptr-NULL leg. Both observations
-    // together: the 1A618 stw executes (native, journal sees the store...
-    // or DOES it?) yet the word reads back unchanged. NEXT fzEYzb100:
-    // is the stw's EA the watched word at all? Dump r13 (waker frame)
-    // vs the armed waitword EA: the 1A60C lwz/addi/stw sequence uses
-    // r13 — if the frame's r13 differs from the waiter's, the store
-    // lands elsewhere. Entry probe already logs r13; add the 1A610-load
-    // values via the BFC8 r3/r4 dump below.
+    // entries): the waker-side bl chain RUNS every entry. The 1A618 stw
+    // itself is native (chunk 0006: 1A60C/1A610/1A614/1A618 carry no
+    // downcount, running as one stretch to the 1A61C bl), so dispatch
+    // probes can never observe it — but the 1A61C bl DOES dispatch, and
+    // its BFC8 entry (lr=1A620) fires, PROVING control passed through
+    // 1A618. The journal DOES see the store (pre-write); the word reads
+    // back 0 at the next 1A55C entry because the 1AB1C video clearer
+    // (stw r31=0, journal pc=1AB1C) zeroes it every frame — the waker
+    // increments (+1) and the clearer zeroes, racing with the waiter
+    // sampling between them. The 1A640-fallthrough BFC8 (lr=1A750) fires
+    // because the fnptr word (-31372) is still 0 (journal slot3: only
+    // zero-writes) — the 1AF30 clearer zeroes it too. Both clearers run
+    // in the same video frame; the wake is real but never accumulates.
     if(addr==0x8000BE00u||addr==0x8000BFC8u){
       // fzEYzb98: dump GPR[1..7] — the 1A60C path passes r3=[sp+24] into
       // BFC8 and r3/r4 into the BE00 calls; register state at the BFC8
