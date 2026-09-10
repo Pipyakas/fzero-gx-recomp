@@ -1553,6 +1553,48 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         addr==0x80070068u?"70068":"700B4",
         cpu->gpr[3], cpu->gpr[4], cpu->lr, *c);
       return false; }
+    // fzEYzb120: 6FEA0 is a NATIVE goto-target (from 6FE3C-taken, no
+    // downcount, HAS switch case — reachable only as native goto landing,
+    // never as a dispatch entry). 6FE14 (bl 1140C, downcount, switch case)
+    // IS dispatchable — but the park iterations never dispatch EITHER
+    // (both silent in probe146): the WHOLE 6FE14->6FEA8 loop runs native
+    // inside ONE dolrecomp_call from 6FE94/6FE08, like D9CC's DCD8 blrl
+    // stretch. So the loop is INVISIBLE to dispatch probes by
+    // construction; observe only its EFFECT: journal here is armed;
+    // byte -30476 read live at 6FEB0/6FCE0-dispatch points. If the byte
+    // stays 0 while 700F4 never fires, the 6FCE0 path stalls before
+    // 6FD1C — chase the 6Fxx tail (6FD34 bit-test? 6FD74 C41C call?).
+    // NEXT: probes at 6FD1C-entry + 6FD34 + 700F4-entry (all dispatched).
+    if(addr==0x8006FE14u){
+      static unsigned _f=0; _f++;
+      if(_f<=6||_f%5000000==0){ uint32_t fl=0xDEADu;
+        guest_read32(cpu->gpr[13]-30476u,&fl);
+        fprintf(stderr,"[wait3] 6FE14-lap flag30476=0x%08X r3=0x%08X lr=0x%08X (#%u)\n",
+          fl, cpu->gpr[3], cpu->lr, _f); }
+      return false; }
+    if(addr==0x8006FD1Cu){
+      static unsigned _d=0; if(++_d<=4){ uint32_t fl=0xDEADu;
+        guest_read32(cpu->gpr[13]-30476u,&fl);
+        fprintf(stderr,"[wait3] 6FD1C-entry flag30476=0x%08X lr=0x%08X (#%u)\n",
+          fl, cpu->lr, _d); }
+      return false; }
+    if(addr==0x8006FD34u){
+      static unsigned _t=0; if(++_t<=4)
+        fprintf(stderr,"[wait3] 6FD34-bitest r0=%u r3=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[0], cpu->gpr[3], cpu->lr, _t);
+      return false; }
+    if(addr==0x800700F4u){
+      static unsigned _w=0; if(++_w<=4)
+        fprintf(stderr,"[wait3] 700F4-filer r0=%u lr=0x%08X (#%u)\n",
+          cpu->gpr[0], cpu->lr, _w);
+      return false; }
+    if(addr==0x8006FEA0u){
+      static unsigned _f2=0; _f2++;
+      if(_f2<=6||_f2%5000000==0){ uint32_t fl=0xDEADu;
+        guest_read32(cpu->gpr[13]-30476u,&fl);
+        fprintf(stderr,"[wait3] 6FEA0-lap flag30476=0x%08X r0=%u lr=0x%08X (#%u)\n",
+          fl, cpu->gpr[0], cpu->lr, _f2); }
+      return false; }
     // fzEYzb106: second waiter frame (3416C) + flag writer (34488/344A0).
     // 3416C runs 33E20-worker then parks 110A8 on queue r13-30628 until
     // byte r13-30632 flips (341C4 lbz poll); 34488-frame (3448C li r3,1)
