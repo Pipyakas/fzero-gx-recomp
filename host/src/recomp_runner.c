@@ -744,6 +744,9 @@ static uint32_t chassis_ctx_ptr(void){
 // level-triggered hardware.
 #define CHASSIS_FRAME_WORK_UNITS 200000ull
 static uint32_t s_os_dispatch_interrupt = 0x8000D9CCu; // F-Zero __OSDispatchInterrupt (OSInterruptMask.s)
+// fzEYzb116: gate for null-GX PE-finish synthesis (see slice tail). Set when
+// the guest registers handler 19 (34488, the waiter-2 flag filer).
+static bool s_pe19_registered = false;
 static void chassis_deliver_external(void){
     // Parked until the F-Zero dispatcher address is known. Retrace status +
     // timebase are still driven from the slice tail; nothing redirects pc here.
@@ -1470,6 +1473,9 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _q=0; if(++_q<=40)
         fprintf(stderr,"[wait2] IRQREG idx=%d handler=0x%08X lr=0x%08X (#%u)\n",
           (int)(int16_t)(cpu->gpr[3]&0xFFFFu), cpu->gpr[4], cpu->lr, _q);
+      // fzEYzb116: note handler-19 registration for null-GX PE synthesis.
+      if((int16_t)(cpu->gpr[3]&0xFFFFu)==19 && cpu->gpr[4]==0x80034488u)
+        s_pe19_registered = true;
       return false; }
     // fzEYzb114b: 343BC-entry (dispatched, downcount-11) = handler-18 head.
     // If 343BC fires per retrace but 34488 never does, cause-18 pends while
@@ -2720,6 +2726,39 @@ void recomp_run_slice(void){
                 dol_interrupts_assert_vi_retrace(&s_interrupts);
                 dol_si_latch_poll(&s_si, 0xFu);
                 dol_interrupts_set_source(&s_interrupts, DOL_PI_CAUSE_SI, dol_si_interrupt_pending(&s_si));
+                // fzEYzb116 (REVISED probe138 — TOKEN alone never reaches
+                // handler 19; D9CC's cause&mask gate is INDEX-parallel, and
+                // the index-19 leg needs BOTH 0x200 AND 0x8000-set paths per
+                // the bit-walk ORs at DA70/DA80/DAA8: bits 0x8000+0x4000+
+                // 0x2000+0x1000 + low 0x8000+0x1000+0x2000): set TOKEN (idx
+                // 18's source) AND PE_FINISH (idx 19's source) together iff
+                // the guest registered handler 19 (34488) AND the D9CC mask
+                // enables BOTH causes (guest-gated, like SI). Both are real
+                // PE completion sources the null-GX backend otherwise never
+                // produces; the guest's own 344B8/344DC/344E4/344F0-344F4
+                // waiter-link chain decides whether the 3416C flag flips.
+                // (Probe137 proved the OR: TOKEN-only => 343BC x4, 34488 x0.)
+                // fzEYzb116 (CONFIRMED probe140: mask=0xFFC has TOKEN but
+                // NOT FINISH — so the cause-19 leg's 0x8000-set path at
+                // DBE8 can never take; handler 19 is unreachable while the
+                // mask lacks PE_FINISH). Synthesize the ack the mask is
+                // WAITING for: the guest ACKs PE_FINISH by writing
+                // 0xCC00100A|0x0008 (DOL_PE_FINISH_ACK_BIT), which clears
+                // PI cause-0x400 — but with null-GX the cause never SET, so
+                // the D9CC leg sends the guest in circles. Set the FINISH
+                // cause iff handler 19 is registered (game-owned dispatch
+                // stays the guest's; this only provides the device event
+                // the null backend otherwise never produces, same class as
+                // the SI latch and VCT latch fixes). No mask condition:
+                // the D9CC table gates on cause&mask itself.
+                // DIAGNOSTIC: log mask/cause at the synthesis point.
+                { static unsigned long long _pm=0; if(++_pm==1||_pm%2000000==0){
+                    fprintf(stderr,"[pe19] synth mask=0x%08X cause=0x%08X reg=%d\n",
+                      dol_interrupts_pi_mask(&s_interrupts),
+                      dol_interrupts_pi_cause(&s_interrupts),
+                      s_pe19_registered?1:0); } }
+                if(s_pe19_registered)
+                    dol_interrupts_commit_pe_finish(&s_interrupts);
             }
             // AID audio-DMA cadence runs on guest-work units (Strikers:
             // audio_poll per block). No audio output here — but the
