@@ -175,6 +175,26 @@ static bool chassis_vi_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* val
     if(value) *value = dol_interrupts_mmio_read(&s_interrupts, ea, size);
     return true;
 }
+// fzEYzb118: null-GX CP STATUS REGISTER (0xCC000000). GX init polls the CP
+// status word (Dolphin CommandProcessorManager::Init: ReadIdle=1,
+// CommandIdle=1 — fresh-console idle FIFO). Unclaimed reads return 0 =
+// "FIFO busy forever", so the 700C0/700D8 poll loop (320F0+[sp+10]==1
+// gate) never observes completion and the boot parks at 320F0. Report
+// the Dolphin power-on value (ReadIdle|CommandIdle = 0x000C, 16-bit) for
+// the status halfword; every other CP offset still reports 0 (no FIFO
+// emulation — GP adresses are not served, so no phantom draws).
+static bool chassis_cp_read(void* user, CPUState* cpu, u32 ea, u8 size, u64* value){
+    (void)user; (void)cpu;
+    if(value){
+        if(ea == 0xCC000000u && size == 2u) *value = 0x000Cu;
+        else *value = 0u;
+    }
+    return true;
+}
+static bool chassis_cp_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value){
+    (void)user; (void)cpu; (void)ea; (void)size; (void)value;
+    return true; // CP control/clear writes acked, no FIFO state kept
+}
 static bool chassis_vi_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 value){
     (void)user; (void)cpu;
     dol_interrupts_mmio_write(&s_interrupts, ea, size, value);
@@ -646,6 +666,8 @@ static void chassis_init(void){
     // through the production interrupt model; DI (0xCC006000 len 0x28)
     // through the production DI model; every other device still
     // reports 0 via hle_external_* fallback below.
+    // fzEYzb118: CP status register (null-GX idle FIFO: ReadIdle|CmdIdle).
+    dol_mmio_bus_register(&s_mmio_bus, 0xCC000000u, 0x20u, chassis_cp_read, chassis_cp_write, NULL);
     dol_mmio_bus_register(&s_mmio_bus, 0xCC002000u, 0x80u, chassis_vi_read, chassis_vi_write, NULL);
     dol_mmio_bus_register(&s_mmio_bus, 0xCC003000u, 0x40u, chassis_vi_read, chassis_vi_write, NULL);
     dol_mmio_bus_register(&s_mmio_bus, 0xCC00100Au, 2u, chassis_vi_read, chassis_vi_write, NULL);
