@@ -1451,6 +1451,16 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[wait2] 34378-hookset r3=0x%08X oldhook30640=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
           cpu->gpr[3], h, cpu->gpr[4], cpu->lr, _h); }
       return false; }
+    // fzEYzb111: 342xx dispatcher entries (video-mode blrl chain).
+    // 34230=head (cmp r3,1), 34254=merge, 342B8/342CC/342E0/342F4=legs.
+    // r3 at entry = the mode arg the caller passed through the hook chain
+    // (30640 -> blrl 343BC -> here). lr names the caller leg.
+    if(addr==0x80034230u||addr==0x80034254u||addr==0x800342B8u||addr==0x800342CCu||addr==0x800342E0u||addr==0x800342F4u){
+      static unsigned _d1=0,_d2=0,_d3=0,_d4=0,_d5=0,_d6=0;
+      unsigned *c=addr==0x80034230u?&_d1:addr==0x80034254u?&_d2:addr==0x800342B8u?&_d3:addr==0x800342CCu?&_d4:addr==0x800342E0u?&_d5:&_d6; (*c)++;
+      if(*c<=4) fprintf(stderr,"[wait2] VM-%05X r3=%u r4=0x%08X r5=0x%08X lr=0x%08X (#%u)\n",
+        addr&0xFFFFFu, cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->lr, *c);
+      return false; }
     if(addr==0x800309FCu){
       static unsigned _d=0; if(++_d<=4)
         fprintf(stderr,"[wait2] 309FC-display r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
