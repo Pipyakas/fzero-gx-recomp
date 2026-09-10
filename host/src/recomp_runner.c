@@ -1599,6 +1599,25 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[wait3] 7001C-entry r3=%u r4=%u r5=%u lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->lr, _p);
       return false; }
+    // fzEYzb122: 6FDA4 (bl 35110, dispatched) + 6FDAC (bl 1BE6C,
+    // dispatched) = the 6FD98-tail waitword chain. 35110's r3/r4 gate
+    // the 1BE6C waitword READ (1BE6C = lwz r3,-31388(r13); blr — the
+    // waitword as a FUNCTION). lr=6FDA8/6FDB0 names the leg. If 1BE6C
+    // never fires here, the tail stalls before the 6FDB0 store.
+    if(addr==0x8006FDA4u||addr==0x8006FDACu){
+      static unsigned _t1=0,_t2=0;
+      unsigned *c=addr==0x8006FDA4u?&_t1:&_t2; (*c)++;
+      if(*c<=4){ uint32_t w=0xDEADu; guest_read32(cpu->gpr[13]-31388u,&w);
+        fprintf(stderr,"[wait3] %s r3=0x%08X r4=0x%08X waitword=%u lr=0x%08X (#%u)\n",
+          addr==0x8006FDA4u?"6FDA4-35110":"6FDAC-1BE6C",
+          cpu->gpr[3], cpu->gpr[4], w, cpu->lr, *c); }
+      return false; }
+    if(addr==0x8001BE6Cu){
+      static unsigned _v=0; if(++_v<=4){ uint32_t w=0xDEADu;
+        guest_read32(cpu->gpr[13]-31388u,&w);
+        fprintf(stderr,"[wait3] 1BE6C-waitword r3=0x%08X word=%u lr=0x%08X (#%u)\n",
+          cpu->gpr[3], w, cpu->lr, _v); }
+      return false; }
     if(addr==0x80074918u){
       static unsigned _q=0; if(++_q<=4)
         fprintf(stderr,"[wait3] 74918-entry r3=%u r4=%u r5=%u lr=0x%08X (#%u)\n",
