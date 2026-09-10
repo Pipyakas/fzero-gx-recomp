@@ -1641,6 +1641,22 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[wait4] 17180-entry r3=%d r4=0x%08X lr=0x%08X (#%u)\n",
           (int32_t)cpu->gpr[3], cpu->gpr[4], cpu->lr, _v1);
       return false; }
+    // fzEYzb132: 174D0-frame census (the fze.str READ issuer). Entry regs
+    // r3-r8 become r26/r27/r28/flag-r29/r30/r31 (174E0-174F4); 17520 is
+    // the fatal continuation (taken iff r29 < [r26+52] at 17500/17504).
+    // Dump both: entry args + which side the frame resolves to. 17520
+    // firing with r29=1358 proves the FST fix landed but the bounds leg
+    // still rejects; 17508 (non-fatal) firing proves advance.
+    if(addr==0x800174D0u||addr==0x80017520u||addr==0x80017508u){
+      static unsigned _e=0,_f=0,_n=0;
+      unsigned *c=addr==0x800174D0u?&_e:addr==0x80017520u?&_f:&_n; (*c)++;
+      if(*c<=4){ uint32_t d52=0xDEADu;
+        if(addr!=0x800174D0u) guest_read32(cpu->gpr[26]+52u,&d52);
+        fprintf(stderr,"[wait4] %s r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X r8=0x%08X r26=0x%08X r29=%u [r26+52]=%u lr=0x%08X (#%u)\n",
+          addr==0x800174D0u?"174D0-entry":addr==0x80017520u?"17520-FATAL":"17508-live",
+          cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6],
+          cpu->gpr[7], cpu->gpr[8], cpu->gpr[26], cpu->gpr[29], d52, cpu->lr, *c); }
+      return false; }
     if(addr==0x80013934u){
       static unsigned _v0=0; if(++_v0<=4){ uint32_t fl=0xDEADu;
         guest_read32(cpu->gpr[13]-31632u,&fl);
@@ -2130,25 +2146,34 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     if(addr==0x80016DF8u||addr==0x8001687Cu||addr==0x80019354u||addr==0x80019430u||addr==0x80016394u){
       static unsigned _d1=0,_d2=0,_d3=0,_d4=0,_d5=0;
       unsigned *c=addr==0x80016DF8u?&_d1:addr==0x8001687Cu?&_d2:addr==0x80019354u?&_d3:addr==0x80019430u?&_d4:&_d5; (*c)++;
-      // fzEYzb128 (answered probe153 + DOL-decode: 16DF8 FIRES x2, both
-      // return -1). Call#1 path @0x801A63C4 (BSS-built: 1747C builds it
-      // char-by-char with the 0x2F-terminator loop — a REL path like
-      // "fze.xxx.rel/", never in the DOL disc). Call#2 path = the STATIC
-      // string at 0x80095EA0 = "fze.sample.rel" (DOL .data d3, EXI2_Init
-      // log region). NEITHER is in the DOL's own FST (the 16DF8 FST root
-      // is the BOOT disc image: main.dol + fze.*.rel live in the .rvz
-      // tree, but the side-effect FST at 0x81200000 was built from
-      // fst.bin = the EXTRACTED tree whose root layout differs). So the
-      // lookup correctly returns -1 for both: the game asks for REL
-      // files by name, and the HLE FST doesn't contain them. The fix is
-      // the FST/dvd_host layer (serve REL names from the tree), NOT the
-      // lookup. Dump r3 bytes to confirm the path strings.
+      // fzEYzb128 SUPERSEDED by fzEYzb131 (probe160 + FST decode): the
+      // fzEYzb130 FST preload makes 16DF8 find "fze.str" -> entry 1358.
+      // The OLD note (both return -1, REL paths never in the FST) was
+      // written when [0x80000038] was 0 at lookup time so 16DC0 had filed
+      // -31516=0 and EVERY lookup returned -1. With the real root filed,
+      // fze.str resolves; the fze.sample.rel call is a DIFFERENT caller
+      // (its 16DF8 fire is the 1747C-boot path, pre-FST-root or the
+      // strip-to-'/'+1 tail). The REAL divergence is now downstream:
+      // 19354 fires (tag1 enqueue for entry 1358, r4=0x8155AD80 data
+      // block) but 19430 (tag4 READ enqueue -> 16394 -> 0xA8 DI cmd)
+      // NEVER fires — the 174D0 frame takes the 17520 fatal leg
+      // (17180-entry r3=-1 in the OLD runs; now r3=1358) — verify what
+      // 174D0/17520 does next, and whether 19354's 19E9C-link + 187CC
+      // drain completes. Dump r3 path + r4 for each stage.
+      // fzEYzb131: 19354 (tag1 enqueue) must run inside the 174D0 frame
+      // BEFORE the fatal 17520 leg (17574-bl-19354, regs r3-r8 captured
+      // at 174D0-entry snapshot: r26/27/28/30/31 + r29 flag). Sample
+      // [blk+8] (tag) + [blk+12] (state) at 19354-entry: tag should be
+      // 1 (19354 filed li r0,1 at 1935C + stw r0,8(r3)), state b12 should
+      // still be pre-drain. Then 19430-entry proves the READ follows.
       if(*c<=4){ uint32_t r4=cpu->gpr[4]; char pb[24]; pb[0]=0;
         if(cpu->gpr[3]>=GC_RAM_BASE){ uint8_t* p=g_cpu.ram+(cpu->gpr[3]-GC_RAM_BASE);
           int n=0; for(;n<23;n++){ if(p+n>=g_cpu.ram+g_cpu.ram_size) break; char ch=(char)p[n]; if(!ch) break; pb[n]=(ch>=32&&ch<127)?ch:'.'; } pb[n]=0; }
-        fprintf(stderr,"[dvdsm] %s path='%s' r4=0x%08X lr=0x%08X (#%u)\n",
+        uint32_t _tg=0xDEADu,_b12=0xDEADu; uint32_t _blk=cpu->gpr[3];
+        if(addr==0x80019354u||addr==0x80019430u){ guest_read32(_blk+8u,&_tg); guest_read32(_blk+12u,&_b12); }
+        fprintf(stderr,"[dvdsm] %s path='%s' r4=0x%08X blk=0x%08X tag=%u b12=%u lr=0x%08X (#%u)\n",
         addr==0x80016DF8u?"16DF8-path2entry":addr==0x8001687Cu?"1687C-diskid":addr==0x80019354u?"19354-tag1":addr==0x80019430u?"19430-tag4-READ":"16394-DVDLowRead",
-        pb, r4, cpu->lr, *c); }
+        pb, r4, _blk, _tg, _b12, cpu->lr, *c); }
       return false; }
     // fzEYy probe removed: 18DD8/18E08 never fire (mid-chain natives).
     // fzEYx/fzEYzb3/fzEYv probes removed: 18E34 et al / 18F04 et al /
