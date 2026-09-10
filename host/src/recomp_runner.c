@@ -81,6 +81,12 @@ static void watch_journal(u32 offset, u32 size, void* user){
             s_watch_tot[i]++;
             int _is_nz = (v!=0 && v!=0xDEADu);
             int _uncap = (i==1 && _is_nz);
+            // fzEYzb97: log the journal WRITE pc for slot1 nonzero hits
+            // (g_cpu.pc at journal time). Inside a dolrecomp_call the cpu
+            // pc is the native instruction's pc (chunks set ctx->pc per
+            // label), so pc=1A618 here would PROVE the waker store landed.
+            // All 170 hits show pc=34E4/1AB1C — never 1A618 — confirming
+            // the journal never observes the waker store.
             if(s_watch_tot[i]<=8 || s_watch_tot[i]%50000==0 ||
                (_is_nz && (s_watch_nz[i]<64 || _uncap))){
                 if(_is_nz) s_watch_nz[i]++;
@@ -1608,15 +1614,20 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       // truth for the r7 reconstruction: does entry k see INTSR2/3 set?).
       // VCT-gated retrace model: INTSR0/1 latch (game-armed), INTSR2/3
       // (0x0000, VCT=0) stay clear => r7=0x3 => no-wake side expected.
-      static unsigned _n=0; if(++_n<=6){ uint32_t w=0xDEADu;
+      static unsigned _n=0; if(++_n<=6){
+        // fzEYzb96: dump r13 + CURRENT pc alongside the entry pc. The
+        // 1A618 stw is r13-relative: if the waker frame runs with a
+        // different r13 than the waiter's, the store lands elsewhere and
+        // the waitword slot can never observe it.
+        uint32_t w=0xDEADu;
         guest_read32(cpu->gpr[13]-31388u,&w);
         u64 v30=0,v34=0,v38=0,v3c=0;
         dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002030u, 2u, &v30);
         dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002034u, 2u, &v34);
         dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC002038u, 2u, &v38);
         dol_mmio_bus_read(&s_mmio_bus, cpu, 0xCC00203Cu, 2u, &v3c);
-        fprintf(stderr,"[dvdsm] 1A55C-waker-entry r3=0x%08X r4=0x%08X waitword=%u VI30=%04X VI34=%04X VI38=%04X VI3C=%04X lr=0x%08X (#%u)\n",
-          cpu->gpr[3], cpu->gpr[4], w,
+        fprintf(stderr,"[dvdsm] 1A55C-waker-entry r3=0x%08X r4=0x%08X r13=0x%08X waitword=%u VI30=%04X VI34=%04X VI38=%04X VI3C=%04X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], cpu->gpr[13], w,
           (unsigned)v30&0xFFFFu, (unsigned)v34&0xFFFFu,
           (unsigned)v38&0xFFFFu, (unsigned)v3c&0xFFFFu, cpu->lr, _n); }
       return false; }
@@ -1636,11 +1647,29 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // fzEYzb94 (standing question): what arms INTSR2 (VCT=1, HCT=1) on
     // hardware such that the 1A5C0 poll observes bit15 set?
     if(addr==0x8001A600u||addr==0x8001A60Cu){
+      // fzEYzb95: THESE NEVER FIRE (both are native-reach-only: 1A600 via
+      // 1A5F4-taken goto, 1A60C via 1A5FC-taken fallthrough — neither is a
+      // bl target or blr landing, so no dispatch ever lands on them).
+      // Gate outcome is observable ONLY via (a) the journal (1A618 stw with
+      // pc frozen at 1A60C), and (b) the bl continuations below (BE00/BFC8
+      // entries with lr=1A608/1A620/1A628). Kept for documentation.
       static unsigned _g3=0,_g4=0;
       unsigned *c=addr==0x8001A600u?&_g3:&_g4; (*c)++;
       if(*c<=4||*c%200000==0) fprintf(stderr,"[dvdsm] %s r7=0x%08X lr=0x%08X (nowake=%u wake=%u)\n",
         addr==0x8001A600u?"1A600-NOWAKE":"1A60C-WAKE",
         cpu->gpr[7], cpu->lr, _g3, _g4);
+      return false; }
+    // fzEYzb95b: DECISIVE gate probe. Both gate sides call out via bl
+    // (=> dispatch => observable): no-wake side calls BE00 with lr=1A608;
+    // waker side calls BFC8 (lr=1A620) then BE00 (lr=1A628). lr names the
+    // side unambiguously. Log ONLY lr in the 1A600-1A640 window (BE00/BFC8
+    // are hot OS primitives — first-12-each cap burned on boot traffic).
+    if(addr==0x8000BE00u||addr==0x8000BFC8u){
+      static unsigned _b1=0,_b2=0;
+      unsigned *c=addr==0x8000BE00u?&_b1:&_b2; (*c)++;
+      if(cpu->lr>=0x8001A600u && cpu->lr<=0x8001A640u)
+        fprintf(stderr,"[dvdsm] %s-WAKER-LR lr=0x%08X r3=0x%08X r4=0x%08X\n",
+          addr==0x8000BE00u?"BE00":"BFC8", cpu->lr, cpu->gpr[3], cpu->gpr[4]);
       return false; }
     // fzEYzb83: memset entry (dispatched). The journal's 64 nonzero
     // waitword hits (now=1 at pc=34E4) are memset's word-fill pattern, not
