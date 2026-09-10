@@ -1663,12 +1663,18 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           cpu->gpr[3], cpu->gpr[4], cpu->lr, _v3);
       return false; }
     // fzEYzb126: C568-loop census (the C49C memcpy's node walk:
-    // C568 lwz r5,0(r29) / C584 cmplwi r29,0 / C588 bc-12,2-C5A4 exit?
-    // / C58C addis-bound / C594 bc-12,2-C5A4 exit? / C598 cmplwi r30,16
-    // / C5A0 bc-12,0-C568 loop). r29=node cursor, r30=iteration count
-    // (exits at 16). Which exit takes, and does the loop re-enter per
-    // C49C call? Distinguishes "heap walk finds nothing 16x then parks
-    // at 9FFC" from "walk corrupts and never exits".
+    // C568 lwz r5,0(r29) / C584 cmplwi r29,0 / C588 bc-12,2-C5A4 exit
+    // (r29==0 = end of heap chain, NORMAL exit) / C58C addis-bound /
+    // C594 bc-12,2-C5A4 exit (bound check) / C598 cmplwi r30,16 /
+    // C5A0 bc-12,0-C568 loop-back (16 iterations max). r29=node cursor,
+    // r30=iteration count. Which exit takes, and does the loop re-enter
+    // per C49C call? Distinguishes "heap walk finds nothing 16x then
+    // parks at 9FFC" from "walk corrupts and never exits".
+    // fzEYzb127 (answered DOL-decode — branch polarity CORRECTED): C588
+    // bc-12,2 = branch iff EQ (r29==0): NULL cursor EXITS to C5A4, nonzero
+    // FALLS to C58C. So the heap walk exits on NULL (normal list end),
+    // NOT on found. C594 same polarity (bound-check exit). The loop is
+    // CORRECT; the stall is downstream (C5A4-bl-9FFC park), not here.
     if(addr==0x8000C568u||addr==0x8000C584u||addr==0x8000C598u){
       static unsigned _c1=0,_c2=0,_c3=0;
       unsigned *c=addr==0x8000C568u?&_c1:addr==0x8000C584u?&_c2:&_c3; (*c)++;
