@@ -1623,6 +1623,33 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[wait3] 74918-entry r3=%u r4=%u r5=%u lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->lr, _q);
       return false; }
+    // fzEYzb123: post-1425 frontier (20k run): 17180-entry (cmpwi r3,0
+    // after the 1717C-bl-16DF8 path2entry call — dispatched), 13978-entry
+    // (or r3,r31 waiter-link frame, dispatched), C49C-entry (3493C-memcpy
+    // caller region? verify by fire), A000-entry (idle spin: li r3,0 +
+    // b A000 — the park the tail bt shows with lr=C5A8/17520/6380).
+    // lr names the caller of each; A000 firing = the tail park.
+    if(addr==0x80017180u){
+      static unsigned _v1=0; if(++_v1<=4)
+        fprintf(stderr,"[wait4] 17180-entry r3=%d r4=0x%08X lr=0x%08X (#%u)\n",
+          (int32_t)cpu->gpr[3], cpu->gpr[4], cpu->lr, _v1);
+      return false; }
+    if(addr==0x80013978u){
+      static unsigned _v2=0; if(++_v2<=4)
+        fprintf(stderr,"[wait4] 13978-entry r3=0x%08X r31=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[31], cpu->lr, _v2);
+      return false; }
+    if(addr==0x8000C49Cu){
+      static unsigned _v3=0; if(++_v3<=4)
+        fprintf(stderr,"[wait4] C49C-entry r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], cpu->lr, _v3);
+      return false; }
+    if(addr==0x8000A000u){
+      static unsigned _v4=0; _v4++;
+      if(_v4<=4||_v4%5000000==0)
+        fprintf(stderr,"[wait4] A000-spin r3=%u lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->lr, _v4);
+      return false; }
     if(addr==0x8006FEA0u){
       static unsigned _f2=0; _f2++;
       if(_f2<=6||_f2%5000000==0){ uint32_t fl=0xDEADu;
