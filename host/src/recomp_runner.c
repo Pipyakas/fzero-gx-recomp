@@ -1393,6 +1393,47 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(_s<=8) fprintf(stderr,"[dvdsm] 1AF8C-sample r30=%u r0=%u r3=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[30], cpu->gpr[0], cpu->gpr[3], cpu->lr, _s);
       return false; }
+    // fzEYzb103: sleep/wake-chain probes. 110A8 always ends at 11170 bl
+    // 105D0 (r3=0); the waker frame calls 11194 at 1A764 (r3=queue
+    // r13-31380). 105D0's three blr landings (11174 waiter / 11278 waker /
+    // 10818 scheduler) are dispatched => RETURN observable. If 11174 never
+    // fires, 105D0 never returns to the waiter = sleep never wakes.
+    if(addr==0x800105D0u){
+      static unsigned _s=0; _s++;
+      if(_s<=6){ uint32_t th=0xDEADu,f84=0xDEADu,f80=0xDEADu,f88=0xDEADu,st=0xDEADu,sched=0xDEADu;
+        guest_read32(0x800000E4u,&th);
+        guest_read32(cpu->gpr[13]-31684u,&f84); guest_read32(cpu->gpr[13]-31680u,&f80);
+        guest_read32(cpu->gpr[13]-31688u,&f88); guest_read32(cpu->gpr[13]-32640u,&sched);
+        if(th>=GC_RAM_BASE) guest_read32(th+712u,&st);
+        fprintf(stderr,"[sleep] 105D0-entry r3=0x%08X r30=0x%08X thread=0x%08X [th+712]=0x%08X f84=%u f80=%u f88=%u sched=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[30], th, st, f84, f80, f88, sched, cpu->lr, _s); }
+      return false; }
+    // fzEYzb104: 105D0-inner census. 106E4=f88 pre-check (skip scheduler if
+    // set); 10708=scheduler returned; 1071C/1072C=spin polls; 10740=wake
+    // path; 107E0=105D0 return (blr to 11174/11278/10818). Tells where the
+    // waiter parks when RET-11174 never fires.
+    if(addr==0x800106E4u||addr==0x80010708u||addr==0x8001071Cu||addr==0x8001072Cu||addr==0x80010740u||addr==0x800107E0u){
+      static unsigned _q1=0,_q2=0,_q3=0,_q4=0,_q5=0,_q6=0;
+      unsigned *c=addr==0x800106E4u?&_q1:addr==0x80010708u?&_q2:addr==0x8001071Cu?&_q3:addr==0x8001072Cu?&_q4:addr==0x80010740u?&_q5:&_q6; (*c)++;
+      if(*c<=4){ uint32_t f88=0xDEADu;
+        guest_read32(cpu->gpr[13]-31688u,&f88);
+        fprintf(stderr,"[sleep] %05X f88=%u r3=0x%08X r30=0x%08X lr=0x%08X (#%u)\n",
+          addr&0xFFFFFu, f88, cpu->gpr[3], cpu->gpr[30], cpu->lr, *c); }
+      return false; }
+    if(addr==0x80011194u){
+      static unsigned _w=0; _w++;
+      if(_w<=6){ uint32_t q0=0xDEADu,q4=0xDEADu,th=0xDEADu;
+        if(cpu->gpr[3]>=GC_RAM_BASE){ guest_read32(cpu->gpr[3],&q0); guest_read32(cpu->gpr[3]+4u,&q4); }
+        guest_read32(0x800000E4u,&th);
+        fprintf(stderr,"[sleep] 11194-entry r3=0x%08X [r3]=0x%08X [r3+4]=0x%08X thread=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], q0, q4, th, cpu->lr, _w); }
+      return false; }
+    if(addr==0x80011174u||addr==0x80011278u||addr==0x80010818u){
+      static unsigned _r1=0,_r2=0,_r3=0;
+      unsigned *c=addr==0x80011174u?&_r1:addr==0x80011278u?&_r2:&_r3; (*c)++;
+      if(*c<=4) fprintf(stderr,"[sleep] RET-%05X r3=0x%08X r31=0x%08X lr=0x%08X (#%u)\n",
+        addr&0xFFFFFu, cpu->gpr[3], cpu->gpr[31], cpu->lr, *c);
+      return false; }
     // fzEYzb59: 14158 is the DISPATCHED entry of the 14158-1416C leg
     // (14170 itself is a mid-chain native). Probe here: dump r4 (the
     // queue-walk cursor), [r4] (block word), and the 030CE halfword +
@@ -2118,8 +2159,13 @@ void recomp_run_slice(void){
         // state; the guest's own sth/lhz hand-shake runs native. Per-PC pokes
         // are banned anti-patterns (PLAN) regardless of outcome.)
         if(pc==0x8001BD10u){ poke32_set(g_cpu.gpr[13]-31352u, 0u); poke32_set(g_cpu.gpr[13]-31348u, 0u); }
-        else if(pc==0x8001071Cu) poke32_set(g_cpu.gpr[13]-31688u, 1u);
-        else if(pc==0x8001072Cu) poke32_set(g_cpu.gpr[13]-31688u, 1u);
+        // fzEYzb105 (EXP): 1071C/1072C f88-force REMOVED. These pokes
+        // short-circuited the sleep/wake protocol (forced f88=1 before any
+        // waker ran, pushing the waiter into 10740 with a bogus mask). Now
+        // that VI retrace delivers + the waker runs 11194 (which files f88
+        // naturally at its 11240-11254 tail), the waiter should exit its
+        // spins on the REAL bit. If RET-11174 fires, the natural protocol
+        // works and the pokes were the wedge.
 
         else if(pc==0x80033614u) g_cpu.gpr[0]=255;
         else if(pc==0x800332FCu){ uint32_t a=g_cpu.gpr[4]; if(a>=0x80000000u && a+4 < 0x80000000u+g_cpu.ram_size) write_be32(g_cpu.ram+(a-0x80000000u), 255u); }
