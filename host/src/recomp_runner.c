@@ -1588,6 +1588,22 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[wait3] 700F4-filer r0=%u lr=0x%08X (#%u)\n",
           cpu->gpr[0], cpu->lr, _w);
       return false; }
+    // fzEYzb121: 7001C-entry (PAD-config callee, dispatched) + 74918-entry
+    // (its worker, dispatched). 700F4-filer's lr=344E0 (not 6FD1C) means
+    // the 344xx display path sets flag-30476 WITHOUT the 6Fxx frame ever
+    // running 6FD1C — so WHO calls 7001C/700F4, and does the 6Fxx spin
+    // (whose ONLY writer is 6FD1C/700F4) ever observe the filer? lr names
+    // the caller of each.
+    if(addr==0x8007001Cu){
+      static unsigned _p=0; if(++_p<=6)
+        fprintf(stderr,"[wait3] 7001C-entry r3=%u r4=%u r5=%u lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->lr, _p);
+      return false; }
+    if(addr==0x80074918u){
+      static unsigned _q=0; if(++_q<=4)
+        fprintf(stderr,"[wait3] 74918-entry r3=%u r4=%u r5=%u lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->lr, _q);
+      return false; }
     if(addr==0x8006FEA0u){
       static unsigned _f2=0; _f2++;
       if(_f2<=6||_f2%5000000==0){ uint32_t fl=0xDEADu;
