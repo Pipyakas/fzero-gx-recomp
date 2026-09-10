@@ -2130,9 +2130,20 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     if(addr==0x80016DF8u||addr==0x8001687Cu||addr==0x80019354u||addr==0x80019430u||addr==0x80016394u){
       static unsigned _d1=0,_d2=0,_d3=0,_d4=0,_d5=0;
       unsigned *c=addr==0x80016DF8u?&_d1:addr==0x8001687Cu?&_d2:addr==0x80019354u?&_d3:addr==0x80019430u?&_d4:&_d5; (*c)++;
-      if(*c<=4) fprintf(stderr,"[dvdsm] %s r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
+      // fzEYzb128 (answered probe153 — 16DF8 FIRES x2, r3 = the path
+      // string): BOTH calls return -1 (17180-entry r3=-1 x2), so the
+      // FST lookup FAILS for both the game path (0x801A63C4) and the
+      // second path (0x80095EA0). The .data FST region the guest reads
+      // (0x80095EA0 = our DOL .data d3!) has no valid entry for these
+      // paths — the side-effect FST at 0x81200000 (102AC) is what 16DC0
+      // indexed at boot, but 16DF8 reads the DISC FST (fst.bin @0x80000038
+      // -> 0x81200000?) or the .data copy. Dump r3 bytes to see the path.
+      if(*c<=4){ uint32_t r4=cpu->gpr[4]; char pb[24]; pb[0]=0;
+        if(cpu->gpr[3]>=GC_RAM_BASE){ uint8_t* p=g_cpu.ram+(cpu->gpr[3]-GC_RAM_BASE);
+          int n=0; for(;n<23;n++){ if(p+n>=g_cpu.ram+g_cpu.ram_size) break; char ch=(char)p[n]; if(!ch) break; pb[n]=(ch>=32&&ch<127)?ch:'.'; } pb[n]=0; }
+        fprintf(stderr,"[dvdsm] %s path='%s' r4=0x%08X lr=0x%08X (#%u)\n",
         addr==0x80016DF8u?"16DF8-path2entry":addr==0x8001687Cu?"1687C-diskid":addr==0x80019354u?"19354-tag1":addr==0x80019430u?"19430-tag4-READ":"16394-DVDLowRead",
-        cpu->gpr[3], cpu->gpr[4], cpu->lr, *c);
+        pb, r4, cpu->lr, *c); }
       return false; }
     // fzEYy probe removed: 18DD8/18E08 never fire (mid-chain natives).
     // fzEYx/fzEYzb3/fzEYv probes removed: 18E34 et al / 18F04 et al /
