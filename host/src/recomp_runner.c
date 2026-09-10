@@ -1629,15 +1629,33 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // caller region? verify by fire), A000-entry (idle spin: li r3,0 +
     // b A000 — the park the tail bt shows with lr=C5A8/17520/6380).
     // lr names the caller of each; A000 firing = the tail park.
+    // fzEYzb124 (answered probe151 — 13978 fires x4 with SELF-lr): 13978
+    // is a blrl-called waiter frame whose lr is its own body (BFC8 with
+    // lr=13978 = the frame re-arms its own waiter link each pass).
+    // r3=0x801B7558 (sp+24 waiter block), r31=0x8015C748 (video ctx):
+    // the frame waits on the SAME queue the 344xx display path feeds.
+    // NEXT: 13934-entry (frame head: does the 13948-flag gate pass?) +
+    // 13980-entry (post-blrl continuation: does the hook RETURN?).
     if(addr==0x80017180u){
       static unsigned _v1=0; if(++_v1<=4)
         fprintf(stderr,"[wait4] 17180-entry r3=%d r4=0x%08X lr=0x%08X (#%u)\n",
           (int32_t)cpu->gpr[3], cpu->gpr[4], cpu->lr, _v1);
       return false; }
+    if(addr==0x80013934u){
+      static unsigned _v0=0; if(++_v0<=4){ uint32_t fl=0xDEADu;
+        guest_read32(cpu->gpr[13]-31632u,&fl);
+        fprintf(stderr,"[wait4] 13934-head r3=0x%08X r4=0x%08X flag30632=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], fl, cpu->lr, _v0); }
+      return false; }
     if(addr==0x80013978u){
       static unsigned _v2=0; if(++_v2<=4)
         fprintf(stderr,"[wait4] 13978-entry r3=0x%08X r31=0x%08X lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->gpr[31], cpu->lr, _v2);
+      return false; }
+    if(addr==0x80013980u){
+      static unsigned _v5=0; if(++_v5<=4)
+        fprintf(stderr,"[wait4] 13980-posthook r3=0x%08X r31=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[31], cpu->lr, _v5);
       return false; }
     if(addr==0x8000C49Cu){
       static unsigned _v3=0; if(++_v3<=4)
