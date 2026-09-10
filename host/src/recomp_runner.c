@@ -1281,10 +1281,18 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // 11160 never fires — 110A8 frame runs native through). Re-enable
     // with caps if the wait pattern changes.
     if(addr==0x800110A8u){
-      static unsigned _n=0; if(++_n<=2){ uint32_t qh=0xDEADu;
+      static unsigned _n=0; if(++_n<=4){ uint32_t qh=0xDEADu,q0=0xDEADu,q4=0xDEADu,th=0xDEADu;
         guest_read32(cpu->gpr[3]+732u,&qh);
-        fprintf(stderr,"[wait] 110A8-entry r30=0x%08X queuehead+732=0x%08X lr=0x%08X (#%u)\n",
-          cpu->gpr[30], qh, cpu->lr, _n); }
+        guest_read32(cpu->gpr[3],&q0); guest_read32(cpu->gpr[3]+4u,&q4);
+        guest_read32(0x800000E4u,&th);
+        fprintf(stderr,"[wait] 110A8-entry r3=0x%08X [r3]=0x%08X [r3+4]=0x%08X [r3+732]=0x%08X thread=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], q0, q4, qh, th, cpu->lr, _n); }
+      // fzEYzb102: post-sleep RETURN probe. 110A8's blr landing (1AF8C) is
+      // the waiter's sample point — but 110A8 itself may never RETURN
+      // (thread sleeps forever if never woken). Dump the RETURN side:
+      // 1AF8C fires => the sleep returned => sample r0 there (fzEYzb101).
+      // Correlate counts: 110A8-entry N vs 1AF8C-sample M. M<N (here 0<2)
+      // = threads still asleep = the sleep primitive itself never wakes.
       return false; }
     // fzEYzb47 (answered statically — 17234 caller chain decoded): the
     // ONLY in-DVD caller of the 199xx family is 17234 (bl 19B78), inside
@@ -1372,6 +1380,18 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[watchmem] armed gate2off=0x%X waitoff=0x%X curblkoff=0x%X fnptroff=0x%X m52off=0x%X m56off=0x%X doneoff=0x%X (r13=0x%08X)\n",
           s_watch_off[0], s_watch_off[1], s_watch_off[2], s_watch_off[3], s_watch_off[4], s_watch_off[5], s_watch_off[6], cpu->gpr[13]);
       }
+      return false; }
+    // fzEYzb101: waiter SAMPLE probe. 1AF8C (dispatched, downcount) is
+    // the waiter's re-read of the word AFTER the 110A8 sleep; r0 is the
+    // sampled value, r30 the pre-sleep value. Exit iff r30!=r0. Dump
+    // both: any nonzero r0 here = the waiter OBSERVED a wake.
+    // (Correction: an earlier build failed — the first edit orphaned the
+    // arming block outside any if; fixed by re-adding this probe AFTER
+    // the arming close brace. Uncapped counter, first-8 dump.)
+    if(addr==0x8001AF8Cu){
+      static unsigned _s=0; _s++;
+      if(_s<=8) fprintf(stderr,"[dvdsm] 1AF8C-sample r30=%u r0=%u r3=0x%08X lr=0x%08X (#%u)\n",
+        cpu->gpr[30], cpu->gpr[0], cpu->gpr[3], cpu->lr, _s);
       return false; }
     // fzEYzb59: 14158 is the DISPATCHED entry of the 14158-1416C leg
     // (14170 itself is a mid-chain native). Probe here: dump r4 (the
