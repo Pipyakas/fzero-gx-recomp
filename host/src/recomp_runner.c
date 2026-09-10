@@ -1459,6 +1459,27 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[wait2] 34378-hookset r3=0x%08X oldhook30640=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
           cpu->gpr[3], h, cpu->gpr[4], cpu->lr, _h); }
       return false; }
+    // fzEYzb114: IRQ-table census. D540(index=r3, handler=r4) is the ONLY
+    // writer to the handler table at [r13-31768] (stw r4,0(r5)); entry is
+    // dispatched. First-40 dump maps index->handler live: expect 18->343BC
+    // + 19->34488 from the 3450C frame (0x80030000+17340=343BC,
+    // +17544=34488), plus the VI handler that reaches 1A55C (r3=0x18
+    // there implies a native stub between DCD8 blrl and 1A55C). lr names
+    // the registrant.
+    if(addr==0x8000D540u){
+      static unsigned _q=0; if(++_q<=40)
+        fprintf(stderr,"[wait2] IRQREG idx=%d handler=0x%08X lr=0x%08X (#%u)\n",
+          (int)(int16_t)(cpu->gpr[3]&0xFFFFu), cpu->gpr[4], cpu->lr, _q);
+      return false; }
+    // fzEYzb114b: 343BC-entry (dispatched, downcount-11) = handler-18 head.
+    // If 343BC fires per retrace but 34488 never does, cause-18 pends while
+    // cause-19 doesn't — the chassis must assert cause-19 per Dolphin.
+    if(addr==0x800343BCu){
+      static unsigned _v=0; if(++_v<=4){ uint32_t h=0xDEADu;
+        guest_read32(cpu->gpr[13]-30640u,&h);
+        fprintf(stderr,"[wait2] 343BC-entry r3=0x%08X r4=0x%08X hook30640=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->gpr[4], h, cpu->lr, _v); }
+      return false; }
     // fzEYzb111: 342xx dispatcher entries (video-mode blrl chain).
     // 34230=head (cmp r3,1), 34254=merge, 342B8/342CC/342E0/342F4=legs.
     // r3 at entry = the mode arg the caller passed through the hook chain
