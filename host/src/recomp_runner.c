@@ -862,6 +862,16 @@ static void hle_fallback(CPUState* cpu, uint32_t raw, uint32_t cia){
         if(xo==1014){ uint32_t ra=(raw>>16)&31u, rb=(raw>>11)&31u; uint32_t ea=(ra?cpu->gpr[ra]:0)+cpu->gpr[rb]; ppc_dcbz_l(cpu,ea,cia); if(cpu->exception==0) cpu->pc=cia+4; return; }
         if(xo==19){ uint32_t rt=(raw>>21)&31u; cpu->gpr[rt]=cpu->cr; cpu->pc=cia+4; return; }
         if(xo==144){ cpu->pc=cia+4; return; }
+        // mftb (X/O 371, SPR 268/269): timebase low/high. The guest's 1140C
+        // spin-wait (mftbu-loop) and the AECC allocator key both read tb via
+        // mftb; without it the slice raises ILLEGAL and drops the chunk.
+        // Route to the deterministic retrace-driven timebase (fzEA).
+        if(xo==371){ uint32_t rt=(raw>>21)&31u, tbr=(((raw>>11)&0x1Fu)<<5)|((raw>>16)&0x1Fu); uint32_t before=cpu->exception; uint32_t v=ppc_mftb(cpu,(uint16_t)tbr,cia); if(cpu->exception==before){ cpu->gpr[rt]=v; cpu->pc=cia+4; } return; }
+        // mfibat (X/O 615/129, SPR 528-535): IBAT upper/lower. The 5E60/5E68
+        // cache-config stretch reads IBAT0U (SPR 528); BATs are identity on
+        // real hardware after OSInit — return the stored value (0 = unset,
+        // matching cpu_reset's zeroed spr file) and advance.
+        if(xo==615||xo==129){ uint32_t rt=(raw>>21)&31u, spr=((raw>>11)&0x1Fu)<<5|((raw>>16)&0x1Fu); uint32_t before=cpu->exception; uint32_t v=ppc_mfspr(cpu,(uint16_t)spr,cia); if(cpu->exception==before){ cpu->gpr[rt]=v; cpu->pc=cia+4; } return; }
         // mtdec (X/O 166) / mfdec (X/O 459): decrementer is SPR 22 in the
         // spr[] file (mtspr/mfspr already route it); the fallback only needs
         // to advance pc. Before this, mtdec raised ILLEGAL and broke the
