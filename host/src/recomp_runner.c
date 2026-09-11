@@ -1812,19 +1812,19 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // Empty tables => correct-but-starved halt; registrars never filed.
     // All sites have ctx->pc (dispatchable); bctrl continuations observed
     // (ctr still = target, r3 = retval, r31 = pre-incr ptr). Read-only.
-    if(addr==0x80007A090u||addr==0x80007A0ACu||addr==0x80007A0A8u||addr==0x80007A0B8u||addr==0x80007A0E8u||addr==0x80007A104u||addr==0x80007A11Cu||addr==0x80007A138u||addr==0x800118FCu||addr==0x80009FFCu){
+    if(addr==0x8007A090u||addr==0x8007A0ACu||addr==0x8007A0A8u||addr==0x8007A0B8u||addr==0x8007A0E8u||addr==0x8007A104u||addr==0x8007A11Cu||addr==0x8007A138u||addr==0x800118FCu||addr==0x80009FFCu){
       static unsigned _b=0,_i=0,_t1=0,_h1=0,_c=0,_t2=0,_h2=0,_h=0,_s=0,_p=0;
-      unsigned *cc=addr==0x80007A090u?&_b:addr==0x80007A0ACu?&_i:addr==0x80007A0A8u?&_t1:addr==0x80007A0B8u?&_h1:addr==0x80007A0E8u?&_c:addr==0x80007A104u?&_t2:addr==0x80007A11Cu?&_h2:addr==0x80007A138u?&_h:addr==0x800118FCu?&_s:&_p; (*cc)++;
-      const char* nm=addr==0x80007A090u?"7A090-T1base":addr==0x80007A0ACu?"7A0AC-T1iter":addr==0x80007A0A8u?"7A0A8-T1ret":addr==0x80007A0B8u?"7A0B8-hook1":addr==0x80007A0E8u?"7A0E8-T2body":addr==0x80007A104u?"7A104-T2chk":addr==0x80007A11Cu?"7A11C-hook2":addr==0x80007A138u?"7A138-halt":addr==0x800118FCu?"118FC-sync":"09FFC-fence";
+      unsigned *cc=addr==0x8007A090u?&_b:addr==0x8007A0ACu?&_i:addr==0x8007A0A8u?&_t1:addr==0x8007A0B8u?&_h1:addr==0x8007A0E8u?&_c:addr==0x8007A104u?&_t2:addr==0x8007A11Cu?&_h2:addr==0x8007A138u?&_h:addr==0x800118FCu?&_s:&_p; (*cc)++;
+      const char* nm=addr==0x8007A090u?"7A090-T1base":addr==0x8007A0ACu?"7A0AC-T1iter":addr==0x8007A0A8u?"7A0A8-T1ret":addr==0x8007A0B8u?"7A0B8-hook1":addr==0x8007A0E8u?"7A0E8-T2body":addr==0x8007A104u?"7A104-T2chk":addr==0x8007A11Cu?"7A11C-hook2":addr==0x8007A138u?"7A138-halt":addr==0x800118FCu?"118FC-sync":"09FFC-fence";
       if(*cc<=8){ uint32_t w0=0xDEADu,w1=0xDEADu,w2=0xDEADu,w3=0xDEADu;
-        if(addr==0x80007A090u){ guest_read32(0x8008FF20u,&w0); guest_read32(0x8008FF24u,&w1); guest_read32(0x8008FF28u,&w2); guest_read32(0x8008FF2Cu,&w3);
+        if(addr==0x8007A090u){ guest_read32(0x8008FF20u,&w0); guest_read32(0x8008FF24u,&w1); guest_read32(0x8008FF28u,&w2); guest_read32(0x8008FF2Cu,&w3);
           fprintf(stderr,"[init] %s T1[0..3]=0x%08X 0x%08X 0x%08X 0x%08X lr=0x%08X (#%u)\n",nm,w0,w1,w2,w3,cpu->lr,*cc); }
-        else if(addr==0x80007A0ACu){ guest_read32(cpu->gpr[31],&w0);
+        else if(addr==0x8007A0ACu){ guest_read32(cpu->gpr[31],&w0);
           fprintf(stderr,"[init] %s r31=0x%08X [r31]=0x%08X lr=0x%08X (#%u)\n",nm,cpu->gpr[31],w0,cpu->lr,*cc); }
-        else if(addr==0x80007A0B8u||addr==0x80007A11Cu){ uint32_t hk=0xDEADu;
-          guest_read32(cpu->gpr[13]+(uint32_t)(int32_t)(addr==0x80007A0B8u?-30192:-30188),&hk);
+        else if(addr==0x8007A0B8u||addr==0x8007A11Cu){ uint32_t hk=0xDEADu;
+          guest_read32(cpu->gpr[13]+(uint32_t)(int32_t)(addr==0x8007A0B8u?-30192:-30188),&hk);
           fprintf(stderr,"[init] %s hook=0x%08X lr=0x%08X (#%u)\n",nm,hk,cpu->lr,*cc); }
-        else if(addr==0x80007A0E8u||addr==0x80007A104u){ uint32_t cnt=0xDEADu;
+        else if(addr==0x8007A0E8u||addr==0x8007A104u){ uint32_t cnt=0xDEADu;
           guest_read32(cpu->gpr[13]-30196u,&cnt); guest_read32(0x801A3280u,&w0); guest_read32(0x801A3284u,&w1); guest_read32(0x801A327Cu,&w2);
           fprintf(stderr,"[init] %s count=%d T2[0]=0x%08X T2[1]=0x%08X T2[-1]=0x%08X ctr=0x%08X r3=0x%08X (#%u)\n",nm,(int32_t)cnt,w0,w1,w2,cpu->ctr,cpu->gpr[3],*cc); }
         else fprintf(stderr,"[init] %s ctr=0x%08X r31=0x%08X lr=0x%08X (#%u)\n",nm,cpu->ctr,cpu->gpr[31],cpu->lr,*cc); }
@@ -1854,10 +1854,13 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[cont] %s-call r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X lr=0x%08X (#%u)\n",
           nm,cpu->gpr[3],cpu->gpr[4],cpu->gpr[5],cpu->gpr[6],cpu->gpr[7],cpu->lr,*cc);
       return false; }
-    if(addr==0x80007A60u||addr==0x80007A070u||addr==0x80007A07Cu||addr==0x80007A0D4u){
-      static unsigned _a=0,_b=0,_c=0,_d=0;
-      unsigned *cc=addr==0x80007A60u?&_a:addr==0x80007A070u?&_b:addr==0x80007A07Cu?&_c:&_d; (*cc)++;
-      const char* nm=addr==0x80007A60u?"7A060-entry":addr==0x80007A070u?"7A070-gate":addr==0x80007A07Cu?"7A07C-T1loop":"7A0D4-T1done";
+    // fzEYzb143: 7A060 head census (native prestretch: 7A070-gate is the
+    // native lwz+cmpwi at 7A07C-entry; 7A08C/7A090 bl-continuations prove
+    // the T1-setup ran). Dump the gate word + count + hooks live.
+    if(addr==0x8007A060u||addr==0x8007A08Cu||addr==0x8007A090u){
+      static unsigned _a=0,_b=0,_c=0;
+      unsigned *cc=addr==0x8007A060u?&_a:addr==0x8007A08Cu?&_b:&_c; (*cc)++;
+      const char* nm=addr==0x8007A060u?"7A060-entry":addr==0x8007A08Cu?"7A08C-post7ED84":"7A090-T1base";
       if(*cc<=8){ uint32_t g0=0xDEADu,cnt=0xDEADu,h1=0xDEADu,h2=0xDEADu;
         guest_read32(cpu->gpr[13]-30200u,&g0); guest_read32(cpu->gpr[13]-30196u,&cnt);
         guest_read32(cpu->gpr[13]-30192u,&h1); guest_read32(cpu->gpr[13]-30188u,&h2);
