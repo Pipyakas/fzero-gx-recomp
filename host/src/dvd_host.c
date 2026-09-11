@@ -229,7 +229,11 @@ unsigned dvd_read_disc_bytes(const uint8_t* fst, unsigned fst_size, unsigned dis
             unsigned fp = ((unsigned)e[4]<<24)|((unsigned)e[5]<<16)|((unsigned)e[6]<<8)|e[7];
             unsigned fl = ((unsigned)e[8]<<24)|((unsigned)e[9]<<16)|((unsigned)e[10]<<8)|e[11];
             if(cur >= fp && cur < fp + fl){ fi=i; found=1; fpos=fp; flen=fl;
-                stroff = ((unsigned)e[0]<<16)|((unsigned)e[1]<<8)|e[2]; break; }
+                // fzEYzb163: word0 = [flags:8][stroff:24] — offset is bytes
+                // 1..3, NOT 0..2 (byte 0 is the dir flag). Old code read
+                // e[0..2] (probe194: entry1343 leaf came out as g_com.gma.lz
+                // instead of line__.bin; parent dirs likewise misnamed).
+                stroff = ((unsigned)e[1]<<16)|((unsigned)e[2]<<8)|e[3]; break; }
         }
         if(!found) break;
         // rebuild rel path: leaf name + climb via dir range containment
@@ -273,7 +277,7 @@ unsigned dvd_read_disc_bytes(const uint8_t* fst, unsigned fst_size, unsigned dis
             }
             if(pdir == 0) break;
             const uint8_t* de = fst + (size_t)pdir*12u;
-            unsigned pso = ((unsigned)de[0]<<16)|((unsigned)de[1]<<8)|de[2];
+            unsigned pso = ((unsigned)de[1]<<16)|((unsigned)de[2]<<8)|de[3]; // fzEYzb163: bytes 1..3
             if(pso < strsize){
                 size_t L = 0; while(L < 127 && pso+L < strsize && strings[pso+L]) L++;
                 if(L==0 || L>=127) break;
@@ -288,7 +292,16 @@ unsigned dvd_read_disc_bytes(const uint8_t* fst, unsigned fst_size, unsigned dis
         char fpath[MAX_PATH];
         snprintf(fpath, sizeof(fpath), "%s\\files\\files\\%s", g_root, rel);
         for(char* c=fpath; *c; c++) if(*c=='/') *c='\\';
+        // fzEYzb162 (diagnostic, bounded): probe193 serves got=0 on the
+        // offset-map path despite correct climb — log rel + open result.
+        { static unsigned _do=0;
+          if(_do<6){ _do++;
+            fprintf(stderr,"[dvdmap] entry%u rel='%s' fpos=0x%X flen=0x%X\n",
+              fi, rel, fpos, flen); } }
         FILE* f = fopen(fpath, "rb");
+        { static unsigned _fo=0;
+          if(!f && _fo<4){ _fo++;
+            fprintf(stderr,"[dvdmap] OPEN FAIL fpath='%s'\n", fpath); } }
         if(!f) break;
         unsigned inoff = cur - fpos;
         unsigned want = flen - inoff;
