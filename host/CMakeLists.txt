@@ -85,6 +85,7 @@ set(GXRUNTIME_SOURCES
 add_library(recomp_core STATIC
     src/gx_fifo_bridge.c
     src/recomp_runner.c
+    src/rel_interp.c
     ../vendor/RingOut/DolRecomp/src/cpu/cpu.c
     ${GXRUNTIME_SOURCES}
     ${RECOMP_DOL_CHUNKS}

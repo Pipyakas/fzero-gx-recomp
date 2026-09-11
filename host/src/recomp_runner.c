@@ -3408,10 +3408,44 @@ void recomp_run_slice(void){
             if((_nseen%16)==1){
               fprintf(stderr,"[new] pc=0x%08X lr=0x%08X (uniq=%d)\n", pc, g_cpu.lr, _nseen); } } }
         if(!dolrecomp_call(&g_cpu, pc)){
-            if(g_cpu.exception==0){
+            // fzEYzb156 (PLAN M2): static recomp only covers DOL addresses.
+            // Runtime-loaded REL code in the heap (0x8155A4BC = fze.sample.rel
+            // entry, reached via GameMainLoopFrame 59A8 bctrl) has no chunk,
+            // so dolrecomp_call misses and the slice parked here forever.
+            // Run those pcs on the integer interpreter (rel_interp.c) instead
+            // of compiling REL chunks into recomp_core. The interpreter
+            // advances guest pc itself (incl. bl back into DOL chunks); the
+            // slice loop then resumes normal dispatch. Interp is CAPPED per
+            // slice iteration (10k steps) so a spinning REL yields to VI/DI.
+            { extern bool rel_interp_step(CPUState* cpu, u32 cia);
+              static int interp_stall = 0;
+              bool in_heap = pc >= 0x81000000u && pc < 0x81800000u;
+              if(in_heap && g_cpu.exception==0){
+                int budget = 10000;
+                bool progress = false;
+                while(budget-- > 0){
+                  u32 cur = g_cpu.pc;
+                  if(cur < 0x81000000u || cur >= 0x81800000u){ progress = true; break; }
+                  if(g_cpu.exception) break;
+                  if(g_cpu.downcount < -800) g_cpu.downcount += 1000;
+                  g_cpu.timebase += 1u;
+                  if(!rel_interp_step(&g_cpu, cur)) break;
+                  if(g_cpu.pc != cur + 4 && g_cpu.pc != cur) { progress = true; }
+                }
+                { static unsigned _n=0; if(++_n<=4||_n%200==0)
+                  fprintf(stderr,"[relinterp] pc=0x%08X lr=0x%08X budget_left=%d exc=%u (#%u)\n",
+                    g_cpu.pc, g_cpu.lr, budget, g_cpu.exception, _n); }
+                if(g_cpu.exception==0) continue;
+              }
+              if(g_cpu.exception==0 && !in_heap){
                 static int miss_cnt=0;
                 if(miss_cnt<6) fprintf(stderr,"[hle] miss pc=0x%08X lr=0x%08X r1=0x%08X\n",pc,g_cpu.lr,g_cpu.gpr[1]);
                 miss_cnt++;
+              } else if(g_cpu.exception==0 && in_heap){
+                interp_stall++;
+                if(interp_stall<=4) fprintf(stderr,"[relinterp] STALL pc=0x%08X lr=0x%08X r1=0x%08X\n",pc,g_cpu.lr,g_cpu.gpr[1]);
+              }
+              (void)interp_stall;
             }
             break;
         }
