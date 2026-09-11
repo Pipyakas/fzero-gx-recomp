@@ -1533,6 +1533,23 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[wait2] 309FC-display r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->gpr[4], cpu->lr, _d);
       return false; }
+    // fzEYzb138: 197F0 leg-name probe (probe171 NEVER fired the old set:
+    // stale binary — build failed on lock). Exactly one of 19818
+    // (m64==0 leg), 19840 (curblk==0 leg), 19848 (curblk!=0 leg) fires
+    // per invocation and NAMES the path. Static trace with m64=1/w72=0/
+    // curblk=0 predicts 19840 always, return 0 — but 6600 sees -1, so
+    // either the leg differs (stale-entry read vs native read) or the
+    // tail (19878 r3=r30 / D51C / 19880 r3=r31) corrupts. 19878-join +
+    // 19880-ret pin the tail.
+    if(addr==0x80019818u||addr==0x80019840u||addr==0x80019848u||addr==0x80019878u||addr==0x80019880u){
+      static unsigned _a=0,_b=0,_c=0,_d=0,_e=0;
+      unsigned *c=addr==0x80019818u?&_a:addr==0x80019840u?&_b:addr==0x80019848u?&_c:addr==0x80019878u?&_d:&_e; (*c)++;
+      if(*c<=6){ uint32_t w12=0xDEADu;
+        guest_read32(cpu->gpr[31]+12u,&w12);
+        fprintf(stderr,"[wait4] %s r0=%d r30=0x%08X r31=0x%08X [r31+12]=%d r3=0x%08X (#%u)\n",
+          addr==0x80019818u?"19818-m64zero":addr==0x80019840u?"19840-cbzero":addr==0x80019848u?"19848-cbnz":addr==0x80019878u?"19878-join":"19880-ret",
+          (int32_t)cpu->gpr[0],cpu->gpr[30],cpu->gpr[31],(int32_t)w12,cpu->gpr[3],*c); }
+      return false; }
     // fzEYzb117: post-waiter2 park (320F0) + 70068/700B4 display chain.
     // 320F0 (dispatched, downcount) copies VI [r13-30708]+0 live bits into
     // gx vars [r2-32232]+12 + stb flags to r3/r4/r5/r6/r7; returns via
@@ -1657,6 +1674,89 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6],
           cpu->gpr[7], cpu->gpr[8], cpu->gpr[26], cpu->gpr[29], d52, cpu->lr, *c); }
       return false; }
+    // fzEYzb139 (HLE open-completion — same class as fzEYzb125's 858E4:
+    // PLAN-banned per-PC intervention, KEPT with rationale): the tag1
+    // (fze.str OPEN) request links, drains and slot-invokes 17590->6340
+    // EXACTLY ONCE (probe172: lr=18860/175B0), but the drain's slot-invoke
+    // passes r3=-1 unconditionally (18858 li r3,-1), and 6340's bclr
+    // early-return on r3==-1 NEVER clears flag -31973 — so the 6354 poll
+    // (6388) spins forever and DVDOpen never returns, even though the
+    // open itself SUCCEEDED (16DF8 resolved fze.str=1358, block consumed
+    // via the 18830-consume leg). On HW the 199xx lattice later re-invokes
+    // the slot with r3=0/-3 (success) which clears the flag; that lattice
+    // is dead here (m56 never 1, 19B78 never called). Our DI HLE completes
+    // every command, so signal success the same way: turn this -1
+    // (queued) into 0 (done) and let the guest run its OWN clear path
+    // (634C stb). r3 is dead after 6340's blr (175B0 epilogue ignores
+    // it), so nothing else is perturbed. REMOVE once the 199xx/19500
+    // completion lattice runs for real.
+    if(addr==0x80006340u && cpu->gpr[3]==0xFFFFFFFFu){
+      static unsigned _o=0; if(++_o<=4)
+        fprintf(stderr,"[wait4] 6340-COMPLETE r4=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[4], cpu->lr, _o);
+      cpu->gpr[3]=0; }
+    // fzEYzb135: post-tag1 spin census. 19354 returns 1 but the 6354 poll
+    // loop (6388 native poll -> 6384-bl-659C pump) never exits: the only
+    // 6340-callback invocation passes r3=-1 (18858 li) which takes 6340's
+    // bclr early-return (no flag clear). 659C-entry counts pump iterations;
+    // 6340-entry samples the callback arg; 58AC fires iff the spin exits
+    // (6354 returns to game); 18868 counts drain-skip legs; 175B0 proves
+    // the 6340 blrl returned into the slot epilogue.
+    if(addr==0x8000659Cu||addr==0x80006340u||addr==0x800058ACu||addr==0x80018868u||addr==0x800175B0u||addr==0x80006388u||addr==0x80006394u||addr==0x800058BCu||addr==0x800058C4u||addr==0x80017228u){
+      static unsigned _p=0,_c=0,_o=0,_k=0,_e=0,_l=0,_r=0,_b=0,_q=0,_u=0;
+      unsigned *c=addr==0x8000659Cu?&_p:addr==0x80006340u?&_c:addr==0x800058ACu?&_o:addr==0x80018868u?&_k:addr==0x800175B0u?&_e:addr==0x80006388u?&_l:addr==0x80006394u?&_r:addr==0x800058BCu?&_b:addr==0x800058C4u?&_q:&_u; (*c)++;
+      if(*c<=3||*c%20000000==0){ uint32_t fl=0xDEADu;
+        guest_read32(cpu->gpr[13]-31973u,&fl);
+        fprintf(stderr,"[wait4] %s r3=0x%08X r4=0x%08X flagB=%u lr=0x%08X (#%u)\n",
+          addr==0x8000659Cu?"659C-pump":addr==0x80006340u?"6340-cb":addr==0x800058ACu?"58AC-openret":addr==0x80018868u?"18868-skip":addr==0x800175B0u?"175B0-slotret":addr==0x80006388u?"6388-poll":addr==0x80006394u?"6394-openret":addr==0x800058BCu?"58BC-postopen":addr==0x800058C4u?"58C4":"17228-issuer",
+          cpu->gpr[3], cpu->gpr[4], (fl>>24)&0xFFu, cpu->lr, *c); }
+      return false; }
+    // fzEYzb136: 659C-pump interior. 659C fires ONCE then the opener
+    // thread never returns to 6388/659C: the pump descends 65FC->197F0->
+    // 6600 (r3=-1 each time, 197F0's m64==0 leg: STALE r13 context in the
+    // display thread) then runs 6634-row dispatch + GAME-LOGIC loop
+    // (65E4 bctrl indirect whose REGISTRAR 6914 writes [r13-31968] was
+    // never reached post-tag1: 65D8-pretgt r12tgt=0). 6600 samples each
+    // 197F0 return (r31 frozen at -1), 68B4 proves pump exit, 6798 shows
+    // the drive-table scan leg (probe168+).
+    if(addr==0x80006798u||addr==0x80006600u||addr==0x800068B4u||addr==0x800065FCu||addr==0x8000660Cu||addr==0x8000661Cu||addr==0x80006914u||addr==0x80006AF4u||addr==0x80006634u){
+      static unsigned _l=0,_m=0,_x=0,_y=0,_v=0,_w=0,_u=0,_t=0,_d=0;
+      unsigned *c=addr==0x80006798u?&_l:addr==0x80006600u?&_m:addr==0x800068B4u?&_x:addr==0x800065FCu?&_y:addr==0x8000660Cu?&_v:addr==0x8000661Cu?&_w:addr==0x80006914u?&_u:addr==0x80006AF4u?&_t:&_d; (*c)++;
+      if(*c<=6||*c%5000000==0){
+        if(addr==0x80006914u||addr==0x80006AF4u){ uint32_t t=0xDEADu;
+          guest_read32(cpu->gpr[13]-31968u,&t);
+          fprintf(stderr,"[wait4] %s registrar r3=0x%08X [r13-31968]=0x%08X lr=0x%08X (#%u)\n",
+            addr==0x80006914u?"6914-reg":"6AF4-flagget",cpu->gpr[3],t,cpu->lr,*c);
+        } else if(addr==0x80006634u){ uint32_t tgt=0xDEADu,t0=0xDEADu;
+          guest_read32(0x8012208Cu+cpu->gpr[0]*4u,&tgt); guest_read32(0x8012208Cu,&t0);
+          fprintf(stderr,"[wait4] 6634-rowdispatch r31=%d idx=%u tgt=0x%08X t0=0x%08X lr=0x%08X (#%u)\n",
+            (int32_t)cpu->gpr[31],cpu->gpr[0],tgt,t0,cpu->lr,*c);
+        } else fprintf(stderr,"[wait4] %s r0=%d r3=0x%08X r31=%d ctr=0x%08X lr=0x%08X (#%u)\n",
+          addr==0x80006798u?"6798-scan":addr==0x80006600u?"6600-post197F0":addr==0x800068B4u?"68B4-pumpexit":addr==0x800065FCu?"65FC-pre197F0":addr==0x8000660Cu?"660C-row":"661C-indcall",
+          (int32_t)cpu->gpr[0], cpu->gpr[3], (int32_t)cpu->gpr[31], cpu->ctr, cpu->lr, *c); }
+      return false; }
+    // fzEYzb137: 197F0 leg + pump indirect-target census. 197F0 returns -1
+    // (6600-post r3=-1 x3) but static decode allows -1 ONLY via the m64==0
+    // leg (19818) — m64 is set-once (=1 since STOPMOTOR completion), so the
+    // -1 implies either a wrong-r13 read or a [curblk+12]=-1 reload via
+    // 19864. Dump r13 + DVD globals + curblk words to decide. 65D8 samples
+    // the pump's indirect target ([r13-31972]: null => bctrl skipped,
+    // straight to 65FC/197F0); 65EC samples the bctrl result (fires iff the
+    // indirect call was taken).
+    if(addr==0x800197F0u){
+      static unsigned _n=0; if(++_n<=3){ uint32_t r13=cpu->gpr[13],m64=0xDEADu,m60=0xDEADu,m56=0xDEADu,cb=0,w72=0xDEADu,tg=0xDEADu,b12=0xDEADu,sl=0xDEADu;
+        guest_read32(r13-31464u,&m64); guest_read32(r13-31460u,&m60); guest_read32(r13-31456u,&m56);
+        guest_read32(r13-31488u,&cb); guest_read32(r13-31472u,&w72);
+        if(cb>=0x80000000u){ guest_read32(cb+8u,&tg); guest_read32(cb+12u,&b12); guest_read32(cb+40u,&sl); }
+        fprintf(stderr,"[wait4] 197F0-leg r13=0x%08X m64=%u m60=%u m56=%u w72=%u curblk=0x%08X tag=%u b12=%d slot=0x%08X r3=0x%08X (#%u)\n",
+          r13,m64,m60,m56,w72,cb,tg,(int32_t)b12,sl,cpu->gpr[3],_n); }
+      return false; }
+    if(addr==0x800065D8u||addr==0x800065ECu){
+      static unsigned _a=0,_b=0; unsigned *c=addr==0x800065D8u?&_a:&_b; (*c)++;
+      if(*c<=3){ uint32_t t=0xDEADu; guest_read32(cpu->gpr[13]-31972u,&t);
+        fprintf(stderr,"[wait4] %s r12tgt=0x%08X r3=0x%08X r31=0x%08X lr=0x%08X (#%u)\n",
+          addr==0x800065D8u?"65D8-pretgt":"65EC-posttgt",t,cpu->gpr[3],cpu->gpr[31],cpu->lr,*c); }
+      return false; }
     if(addr==0x80013934u){
       static unsigned _v0=0; if(++_v0<=4){ uint32_t fl=0xDEADu;
         guest_read32(cpu->gpr[13]-31632u,&fl);
@@ -1703,6 +1803,86 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       if(_v4<=4||_v4%5000000==0)
         fprintf(stderr,"[wait4] A000-spin r3=%u lr=0x%08X (#%u)\n",
           cpu->gpr[3], cpu->lr, _v4);
+      return false; }
+    // fzEYzb140: 7A060 init-table runner census (probe173 parks at A000 with
+    // lr=1190C <- 7A138 bl 118FC <- 7A118 bl 7ED8C: 7A060 ran to its tail).
+    // 7A060 walks T1 @0x8008FF20 (null-terminated fnptr list, 7A09C-7A0B4),
+    // hook [r13-30192], T2 @0x801A3280 indexed by count [r13-30196], hook
+    // [r13-30188], then 7A138 bl 118FC = safety halt (sync->A000 spin).
+    // Empty tables => correct-but-starved halt; registrars never filed.
+    // All sites have ctx->pc (dispatchable); bctrl continuations observed
+    // (ctr still = target, r3 = retval, r31 = pre-incr ptr). Read-only.
+    if(addr==0x80007A090u||addr==0x80007A0ACu||addr==0x80007A0A8u||addr==0x80007A0B8u||addr==0x80007A0E8u||addr==0x80007A104u||addr==0x80007A11Cu||addr==0x80007A138u||addr==0x800118FCu||addr==0x80009FFCu){
+      static unsigned _b=0,_i=0,_t1=0,_h1=0,_c=0,_t2=0,_h2=0,_h=0,_s=0,_p=0;
+      unsigned *cc=addr==0x80007A090u?&_b:addr==0x80007A0ACu?&_i:addr==0x80007A0A8u?&_t1:addr==0x80007A0B8u?&_h1:addr==0x80007A0E8u?&_c:addr==0x80007A104u?&_t2:addr==0x80007A11Cu?&_h2:addr==0x80007A138u?&_h:addr==0x800118FCu?&_s:&_p; (*cc)++;
+      const char* nm=addr==0x80007A090u?"7A090-T1base":addr==0x80007A0ACu?"7A0AC-T1iter":addr==0x80007A0A8u?"7A0A8-T1ret":addr==0x80007A0B8u?"7A0B8-hook1":addr==0x80007A0E8u?"7A0E8-T2body":addr==0x80007A104u?"7A104-T2chk":addr==0x80007A11Cu?"7A11C-hook2":addr==0x80007A138u?"7A138-halt":addr==0x800118FCu?"118FC-sync":"09FFC-fence";
+      if(*cc<=8){ uint32_t w0=0xDEADu,w1=0xDEADu,w2=0xDEADu,w3=0xDEADu;
+        if(addr==0x80007A090u){ guest_read32(0x8008FF20u,&w0); guest_read32(0x8008FF24u,&w1); guest_read32(0x8008FF28u,&w2); guest_read32(0x8008FF2Cu,&w3);
+          fprintf(stderr,"[init] %s T1[0..3]=0x%08X 0x%08X 0x%08X 0x%08X lr=0x%08X (#%u)\n",nm,w0,w1,w2,w3,cpu->lr,*cc); }
+        else if(addr==0x80007A0ACu){ guest_read32(cpu->gpr[31],&w0);
+          fprintf(stderr,"[init] %s r31=0x%08X [r31]=0x%08X lr=0x%08X (#%u)\n",nm,cpu->gpr[31],w0,cpu->lr,*cc); }
+        else if(addr==0x80007A0B8u||addr==0x80007A11Cu){ uint32_t hk=0xDEADu;
+          guest_read32(cpu->gpr[13]+(uint32_t)(int32_t)(addr==0x80007A0B8u?-30192:-30188),&hk);
+          fprintf(stderr,"[init] %s hook=0x%08X lr=0x%08X (#%u)\n",nm,hk,cpu->lr,*cc); }
+        else if(addr==0x80007A0E8u||addr==0x80007A104u){ uint32_t cnt=0xDEADu;
+          guest_read32(cpu->gpr[13]-30196u,&cnt); guest_read32(0x801A3280u,&w0); guest_read32(0x801A3284u,&w1); guest_read32(0x801A327Cu,&w2);
+          fprintf(stderr,"[init] %s count=%d T2[0]=0x%08X T2[1]=0x%08X T2[-1]=0x%08X ctr=0x%08X r3=0x%08X (#%u)\n",nm,(int32_t)cnt,w0,w1,w2,cpu->ctr,cpu->gpr[3],*cc); }
+        else fprintf(stderr,"[init] %s ctr=0x%08X r31=0x%08X lr=0x%08X (#%u)\n",nm,cpu->ctr,cpu->gpr[31],cpu->lr,*cc); }
+      return false; }
+    // fzEYzb142: post-submit continuation census (probe174: after submit#2
+    // the game goes 599C(native)->?->E030->794D8->7A11C->halt; the 599C
+    // chain 59A8-bctrl([r30+52])/59C0-bl-E5A8/59CC-bl-793D4/59D8-bl-B324
+    // is where the READ should be issued — or the halt decided). Dump the
+    // indirect target + its retval + callee args. 7A060-entry logs r13
+    // (main vs DVD r13 decides which words the -30200/-30196/-30188 gates
+    // actually read). All sites have ctx->pc. Read-only, first-8.
+    if(addr==0x8000599Cu||addr==0x800059A8u||addr==0x800059B4u||addr==0x800059C4u||addr==0x800059D4u||addr==0x800059DCu||addr==0x800059E4u||addr==0x800059E8u){
+      static unsigned _a=0,_b=0,_c=0,_d=0,_e=0,_f=0,_g=0,_h=0;
+      unsigned *cc=addr==0x8000599Cu?&_a:addr==0x800059A8u?&_b:addr==0x800059B4u?&_c:addr==0x800059C4u?&_d:addr==0x800059D4u?&_e:addr==0x800059DCu?&_f:addr==0x800059E4u?&_g:&_h; (*cc)++;
+      const char* nm=addr==0x8000599Cu?"599C-cont":addr==0x800059A8u?"59A8-indcall":addr==0x800059B4u?"59B4-indret":addr==0x800059C4u?"59C4-preE5A8":addr==0x800059D4u?"59D4-preB324":addr==0x800059DCu?"59DC-postB324":addr==0x800059E4u?"59E4-bctrl":"59E8-epi";
+      if(*cc<=8){ uint32_t tgt=0xDEADu,w52=0xDEADu;
+        if(cpu->gpr[30]>=0x80000000u) guest_read32(cpu->gpr[30]+52u,&tgt);
+        if(addr==0x800059A8u||addr==0x800059B4u) w52=tgt;
+        fprintf(stderr,"[cont] %s r3=0x%08X r4=0x%08X r30=0x%08X r31=0x%08X [r30+52]=0x%08X ctr=0x%08X lr=0x%08X (#%u)\n",
+          nm,cpu->gpr[3],cpu->gpr[4],cpu->gpr[30],cpu->gpr[31],w52,cpu->ctr,cpu->lr,*cc); }
+      return false; }
+    if(addr==0x8000E030u||addr==0x8000E5A8u||addr==0x800793D4u||addr==0x8000B324u||addr==0x8000B31Cu){
+      static unsigned _a=0,_b=0,_c=0,_d=0,_e=0;
+      unsigned *cc=addr==0x8000E030u?&_a:addr==0x8000E5A8u?&_b:addr==0x800793D4u?&_c:addr==0x8000B324u?&_d:&_e; (*cc)++;
+      const char* nm=addr==0x8000E030u?"E030":addr==0x8000E5A8u?"E5A8":addr==0x800793D4u?"793D4":addr==0x8000B324u?"B324":"B31C";
+      if(*cc<=8)
+        fprintf(stderr,"[cont] %s-call r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X lr=0x%08X (#%u)\n",
+          nm,cpu->gpr[3],cpu->gpr[4],cpu->gpr[5],cpu->gpr[6],cpu->gpr[7],cpu->lr,*cc);
+      return false; }
+    if(addr==0x80007A60u||addr==0x80007A070u||addr==0x80007A07Cu||addr==0x80007A0D4u){
+      static unsigned _a=0,_b=0,_c=0,_d=0;
+      unsigned *cc=addr==0x80007A60u?&_a:addr==0x80007A070u?&_b:addr==0x80007A07Cu?&_c:&_d; (*cc)++;
+      const char* nm=addr==0x80007A60u?"7A060-entry":addr==0x80007A070u?"7A070-gate":addr==0x80007A07Cu?"7A07C-T1loop":"7A0D4-T1done";
+      if(*cc<=8){ uint32_t g0=0xDEADu,cnt=0xDEADu,h1=0xDEADu,h2=0xDEADu;
+        guest_read32(cpu->gpr[13]-30200u,&g0); guest_read32(cpu->gpr[13]-30196u,&cnt);
+        guest_read32(cpu->gpr[13]-30192u,&h1); guest_read32(cpu->gpr[13]-30188u,&h2);
+        fprintf(stderr,"[init] %s r13=0x%08X r1=0x%08X gate30200=%u count30196=%d hook1=0x%08X hook2=0x%08X lr=0x%08X (#%u)\n",
+          nm,cpu->gpr[13],cpu->gpr[1],g0,(int32_t)cnt,h1,h2,cpu->lr,*cc); }
+      return false; }
+    // fzEYzb141: DVD-submit census (probe173: opens succeed, 17228 issuers
+    // run twice, 19B58 fires, but 19430-tag4 NEVER fires). Map which submit
+    // legs execute: 19B78-entry (r3=block: tag/b12?), 1996C (m56 gate),
+    // 19988 (m56==0 leg: files m52/m56=1), 199A8 (tag==4 leg: bl 16D50 =
+    // READ-issue path), 19B9C (198FC result: 0=fail?), 19BB4 (b12 poll),
+    // 1A31C/1A3F4 (cascade entries). All have ctx->pc (dispatchable).
+    // Read-only, first-8 prints.
+    if(addr==0x80019B78u||addr==0x8001996Cu||addr==0x80019988u||addr==0x800199A8u||addr==0x80019B9Cu||addr==0x80019BB4u||addr==0x8001A31Cu||addr==0x8001A3F4u){
+      static unsigned _e=0,_g=0,_m=0,_t=0,_r=0,_p=0,_c=0,_f=0;
+      unsigned *cc=addr==0x80019B78u?&_e:addr==0x8001996Cu?&_g:addr==0x80019988u?&_m:addr==0x800199A8u?&_t:addr==0x80019B9Cu?&_r:addr==0x80019BB4u?&_p:addr==0x8001A31Cu?&_c:&_f; (*cc)++;
+      const char* nm=addr==0x80019B78u?"19B78-submit":addr==0x8001996Cu?"1996C-m56gate":addr==0x80019988u?"19988-m56zero":addr==0x800199A8u?"199A8-tag4issue":addr==0x80019B9Cu?"19B9C-result":addr==0x80019BB4u?"19BB4-b12poll":addr==0x8001A31Cu?"1A31C-cascade":"1A3F4-reg";
+      if(*cc<=8){ uint32_t b8=0xDEADu,b12=0xDEADu,m56=0xDEADu;
+        uint32_t blk=(addr==0x80019B78u||addr==0x80019BB4u)?cpu->gpr[3]:cpu->gpr[30];
+        if(addr==0x8001996Cu||addr==0x80019988u||addr==0x800199A8u) blk=cpu->gpr[29];
+        if(addr==0x80019B9Cu) blk=cpu->gpr[30];
+        if(blk>=0x80000000u){ guest_read32(blk+8u,&b8); guest_read32(blk+12u,&b12); }
+        guest_read32(cpu->gpr[13]-31456u,&m56);
+        fprintf(stderr,"[submit] %s r3=0x%08X r30=0x%08X blk=0x%08X tag=%u b12=%d m56=%u lr=0x%08X (#%u)\n",
+          nm,cpu->gpr[3],cpu->gpr[30],blk,b8,(int32_t)b12,m56,cpu->lr,*cc); }
       return false; }
     if(addr==0x8006FEA0u){
       static unsigned _f2=0; _f2++;

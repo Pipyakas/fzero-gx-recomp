@@ -37,3 +37,7 @@ __pycache__/
 *.log
 .DS_Store
 Thumbs.db
+
+# Probe logs (local debug output, never commit)
+run_probe*.txt
+
