@@ -292,16 +292,7 @@ unsigned dvd_read_disc_bytes(const uint8_t* fst, unsigned fst_size, unsigned dis
         char fpath[MAX_PATH];
         snprintf(fpath, sizeof(fpath), "%s\\files\\files\\%s", g_root, rel);
         for(char* c=fpath; *c; c++) if(*c=='/') *c='\\';
-        // fzEYzb162 (diagnostic, bounded): probe193 serves got=0 on the
-        // offset-map path despite correct climb — log rel + open result.
-        { static unsigned _do=0;
-          if(_do<6){ _do++;
-            fprintf(stderr,"[dvdmap] entry%u rel='%s' fpos=0x%X flen=0x%X\n",
-              fi, rel, fpos, flen); } }
         FILE* f = fopen(fpath, "rb");
-        { static unsigned _fo=0;
-          if(!f && _fo<4){ _fo++;
-            fprintf(stderr,"[dvdmap] OPEN FAIL fpath='%s'\n", fpath); } }
         if(!f) break;
         unsigned inoff = cur - fpos;
         unsigned want = flen - inoff;

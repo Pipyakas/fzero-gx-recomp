@@ -664,7 +664,7 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
                 if(dst){
                     unsigned got = dvd_read_disc_bytes(f, 1024*1024, disc_off, dst, cmd->dma_length);
                     if(got < cmd->dma_length) memset(dst+got, 0, cmd->dma_length-got);
-                    { static int _n=0; if(_n<4){ fprintf(stderr,"[di] tree read off=0x%08X got=%u/%u\n", disc_off, got, cmd->dma_length); _n++; } }
+                    fprintf(stderr,"[di] tree read off=0x%08X got=%u/%u\n", disc_off, got, cmd->dma_length);
                     // fzEYzb153: queue the LOW callback (18D1C cbForStateBusy)
                     // with TCINT bit0 set, mirroring the INQUIRY fix above.
                     // Without this a served READ never completes guest-side.
@@ -3439,7 +3439,13 @@ void recomp_run_slice(void){
             // slice iteration (10k steps) so a spinning REL yields to VI/DI.
             { extern bool rel_interp_step(CPUState* cpu, u32 cia);
               static int interp_stall = 0;
-              bool in_heap = pc >= 0x81000000u && pc < 0x81800000u;
+              // fzEYzb165: dolrecomp_call already missed, so this pc is NOT
+              // DOL-covered. Anything in MEM1 (cached 0x80000000 or uncached
+              // 0xC0000000 alias) is a heap/REL candidate — the old
+              // 0x81000000+ window missed the 0x801C... second-stage target
+              // (REL return value bctrl'd at 59E4, probe196 miss 0x801CAADC).
+              bool in_heap = (pc >= 0x80000000u && pc < 0x81800000u) ||
+                             (pc >= 0xC0000000u && pc < 0xC1800000u);
               if(in_heap && g_cpu.exception==0){
                 int budget = 10000;
                 while(budget-- > 0){
@@ -3456,7 +3462,12 @@ void recomp_run_slice(void){
                   if(cur == HLE_CALLBACK_RETURN){
                     if(dol_hle_handle_callback_return(&g_cpu, cur)) continue;
                     break; }
-                  if(cur < 0x81000000u || cur >= 0x81800000u){
+                  // Inside the interpreter loop: try DOL dispatch first
+                  // for ANY pc (DOL chunks and vectors resolve; heap pcs
+                  // miss and fall through to the single-step below). This
+                  // also lets the loop survive blr/bctrl into DOL code and
+                  // the FP-unavailable vector dance without breaking out.
+                  if(cur < 0x80000000u || (cur >= 0x81800000u && cur < 0xC0000000u) || cur >= 0xC1800000u){
                     if(!dolrecomp_call(&g_cpu, cur)) break;
                     if(g_cpu.exception) break;
                     continue; }
