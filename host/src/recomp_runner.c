@@ -1032,16 +1032,22 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // (177A4/177AC write r0, not a computed pointer). NEXT fzEYzb30: what
     // SHOULD base-31480 point at — i.e. read 17784's selector [r13-31424]
     // (17794 sets it to 1; A360's 030CE halfword may gate entry at all).
-    if(addr==0x800177D0u||addr==0x800177FCu||addr==0x80017814u){
-      static unsigned _n=0,_f=0,_t=0;
-      unsigned *c=addr==0x800177D0u?&_n:addr==0x800177FCu?&_f:&_t; (*c)++;
-      const char* nm=addr==0x800177D0u?"177D0":addr==0x800177FCu?"177FC-LIVE":"17814-dead";
-      if(*c<=6){ uint32_t b=0,p=0xDEADu,v=0xDEADu,w20=0xDEADu;
+    // fzEYzb151 (probe184 verdict: 177FC-live 0 hits, 17814-dead 0 hits —
+    // BOTH legs are native-only stretches inside the single 177D0 dispatch
+    // (same class as 1190C/A000 and 6FE14/6FEA8). The gate DECISION is still
+    // fully determined: p=[0x80000020]=0x0D15EA5E (harness POKE) ->
+    // r0=(p+0x1AE00000)=0x27F5EA5E vs 0x7C22 -> NE -> dead side taken by
+    // correct guest arithmetic. __fstLoad (1A3F4) never runs, so the boot
+    // BB2/FST READ cascade never starts. Fix = the [0x80000020] INPUT word
+    // (what HW apploader files there), never the gate. Probes kept for the
+    // 177D0 base/p dump only; leg probes removed as structurally silent.)
+    if(addr==0x800177D0u){
+      static unsigned _n=0; if(++_n<=6){ uint32_t b=0,p=0xDEADu,v=0xDEADu,w20=0xDEADu;
         guest_read32(cpu->gpr[13]-31480u,&b);
         if(b){ guest_read32(b+32u,&p); if(p&&p>=0x80000000u) guest_read32(p,&v); }
         guest_read32(0x80000020u,&w20);
-        fprintf(stderr,"[dvdsm] %s base=0x%08X p=[base+32]=0x%08X v=[p]=0x%08X [0x80000020]=0x%08X lr=0x%08X (#%u)\n",
-          nm, b, p, v, w20, cpu->lr, *c); }
+        fprintf(stderr,"[dvdsm] 177D0 base=0x%08X p=[base+32]=0x%08X v=[p]=0x%08X [0x80000020]=0x%08X lr=0x%08X (#%u)\n",
+          b, p, v, w20, cpu->lr, _n); }
       return false; }
     // fzEYzb13: 177C0/177C8 (post-call continuations). 177D0 has its
     // own deref-dump probe above; excluded here to avoid double-fire.
