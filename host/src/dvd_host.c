@@ -197,18 +197,16 @@ unsigned dvd_read_disc_bytes(const uint8_t* fst, unsigned fst_size, unsigned dis
         unsigned cur = disc_off + got;
         // find containing file
         unsigned fi = 0; int found = 0; unsigned fpos = 0, flen = 0, stroff = 0;
-        // fzEYzb155: real fst.bin from the extractor is byte-exact but its
-        // filepos/length words are GARBAGE (fst.bin is a tree artifact, not
-        // the disc FST: entry1358 fze.str claims pos=0x0234F73C while the
-        // file lives at <root>/files/files/fze.str). Selection by disc
-        // offset can't work against these words, so match the REQUESTED
-        // (offset,length) pair against the game's own open table instead:
-        // the guest's 174D0 frame passes entry length as r5 (0x280/0x8C0),
-        // and open entries resolve to known FST entry numbers
-        // (fze.str=1358 len 0x272, fze.sample.rel=1355 len 0x8B8).
-        // For now serve purely by length: the only reads the guest issues
-        // are whole-file tag1 reads, so len identifies the file.
-        // len -> tree-relative path (under <root>/files/files/).
+        // fzEYzb155/161 CORRECTED (probe191 raw dump): fst.bin IS a valid
+        // disc-layout FST — filepos words are REAL (entry1343 line__.bin:
+        // fp=0x56F5A7E0 len=0xFD813, matches the guest's 512KB READ
+        // off=0x56F5A7E0 exactly). The "garbage" verdict was wrong (it
+        // assumed tree byte offsets == disc offsets). The REAL failure is
+        // path CLIMB: rel resolves to "line__.bin" (root only), so the tree
+        // open misses <root>/files/files/line__.bin (actual:
+        // enemy_line/line__.bin). Fix = remember the deepest containing dir
+        // (innermost override, not first match). len->path hack KEPT for
+        // the two boot opens only; everything else runs the offset map.
         const char* bylen = NULL;
         if(len == 640) bylen = "fze.str";
         else if(len == 2240 || len == 2232) bylen = "fze.sample.rel";
@@ -238,33 +236,39 @@ unsigned dvd_read_disc_bytes(const uint8_t* fst, unsigned fst_size, unsigned dis
         // (word1 is filepos for files, parent only for dirs — so the
         // file's parent is the dir whose [index,next) range holds fi;
         // verified: entry2 bg_big.gma.lz climbs via dirs 1,0).
-        // NOTE: file word0 is the FULL 32-bit string offset (top byte is
-        // part of the offset for files, not a dir flag — entry2 word0 is
-        // 0x00000003, not 0x03000000). Dir test is: i==0 or the entry was
-        // reached as a dir via range containment... precisely: an entry is
-        // a dir iff some range search treats it as one; directly: dirs
-        // have (word0 & 0xFF000000) != 0 OR are entry 0. Files have small
-        // stroffs whose top byte happens to be 0 — same test works:
-        // top byte nonzero => dir. Entry2 top byte IS 0 => file. Correct.
+        // NOTE: the top-byte dir test MUST apply only to entries REACHED
+        // as parents (candidate pdirs), NOT to the leaf: leaf names live
+        // at low string offsets (their top byte is 0 as part of the
+        // offset — entry1343's stroff 0x5CC9 has top byte 0 but it IS the
+        // file we want). The leaf is always valid when stroff parses.
         char parts[32][128]; int depth = 0;
         unsigned idx = fi;
         if(stroff < strsize){
             size_t L = 0; while(L < 127 && stroff+L < strsize && strings[stroff+L]) L++;
-            if(L < 127){ memcpy(parts[0], strings+stroff, L); parts[0][L]=0; depth = 1; }
-        }
+            if(L==0 || L>=127) break; // leaf name unreadable: no valid path
+            memcpy(parts[0], strings+stroff, L); parts[0][L]=0; depth = 1;
+        } else break;
         unsigned guard = 0;
         while(depth < 32 && guard++ < 64){
-            // Innermost containing dir: the LAST (deepest) dir whose
-            // [index,next) range holds idx — entry 0 (root) always
-            // contains everything, so taking the FIRST match stops at
-            // root and drops intermediate dirs (verified: entry2 must
-            // climb via dir 1, not stop at 0).
+            // Innermost containing dir: the DEEPEST dir whose [index,next)
+            // range holds idx. Entry 0 (root) always contains everything,
+            // so the loop must OVERRIDE (last/deepest wins), not keep the
+            // first match — first-match stops at root and drops intermediate
+            // dirs (probe191: entry1343 climbed to root "bg" only, producing
+            // "line__.bin", while the real path is enemy_line/line__.bin).
+            // Deepest-first scan: iterate i from n-1 down to 1 (then root)
+            // and take the FIRST range hit = the innermost containing dir.
+            // (Old code scanned upward and KEPT the first hit = root, since
+            // root contains everything. Entry-data check: for entry1343,
+            // upward scan yields pdir=0 (root "bg") — wrong; downward yields
+            // 1300 ("enemy_line") — right, verified against the python
+            // parent-chain climb 1343 -> [1300, 0].)
             unsigned pdir = 0;
-            for(unsigned i=0;i<n;i++){
+            for(unsigned i=n;i-- >1;){
                 const uint8_t* d = fst + (size_t)i*12u;
-                if(i==0 || d[0]!=0){
+                if(d[0]!=0){
                     unsigned nxt = ((unsigned)d[8]<<24)|((unsigned)d[9]<<16)|((unsigned)d[10]<<8)|d[11];
-                    if(idx > i && idx < nxt) pdir = i;
+                    if(idx > i && idx < nxt){ pdir = i; break; }
                 }
             }
             if(pdir == 0) break;

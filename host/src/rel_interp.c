@@ -180,7 +180,17 @@ bool rel_interp_step(CPUState* cpu, u32 cia) {
         if (xo == 16 || xo == 528) { // bclr / bcctr
             u8 bo = R_BO(raw), bi = R_BI(raw);
             int c_ok, r_ok;
-            ri_branch_cond(cpu, bo, bi, &c_ok, &r_ok);
+            if (xo == 528) {
+                // fzEYzb158: bcctr never decrements CTR (BO2 reserved/ignored).
+                // ri_branch_cond would do ctr-- for BO2=0 — wrong target next.
+                c_ok = 1;
+                if (bo & 0x10) { r_ok = 1; }
+                else {
+                    u32 mask = 0x80000000u >> bi;
+                    r_ok = (((cpu->cr & mask) != 0) == (((bo >> 3) & 1u) ? 1 : 0));
+                }
+            } else
+                ri_branch_cond(cpu, bo, bi, &c_ok, &r_ok);
             if (c_ok && r_ok) {
                 if (raw & 1u) cpu->lr = cia + 4;
                 cpu->pc = (xo == 16 ? cpu->lr : cpu->ctr) & ~3u;
@@ -312,8 +322,9 @@ bool rel_interp_step(CPUState* cpu, u32 cia) {
                 wide = (u64)(~a) + 0xFFFFFFFFull + ca; res = (u32)wide;
                 cpu->xer = (cpu->xer & ~0x20000000u) | ((wide >> 32) ? 0x20000000u : 0u);
                 ov = ppc_add_overflowed(~a, 0xFFFFFFFFu, res); break; }
-            case 235: { // mullw
-                s64 p = (s64)(s32)s * (s64)(s32)b; res = (u32)p;
+            case 235: { // mullw rD,rA,rB (fzEYzb160: was s*b using
+                // RS==RD old value — must be RA*RB like add/sub/div)
+                s64 p = (s64)(s32)a * (s64)(s32)b; res = (u32)p;
                 ov = (p < -0x80000000ll || p > 0x7FFFFFFFll); break; }
             case 459: { // divwu
                 if (b == 0) res = 0; else res = a / b;

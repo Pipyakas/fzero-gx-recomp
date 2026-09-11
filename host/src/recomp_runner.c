@@ -2455,14 +2455,20 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       // [blk+8] (tag) + [blk+12] (state) at 19354-entry: tag should be
       // 1 (19354 filed li r0,1 at 1935C + stw r0,8(r3)), state b12 should
       // still be pre-drain. Then 19430-entry proves the READ follows.
-      if(*c<=4){ uint32_t r4=cpu->gpr[4]; char pb[24]; pb[0]=0;
+      if(*c<=4){ uint32_t r4=cpu->gpr[4]; char pb[24]; pb[0]=0; char hx[65]; hx[0]=0;
         if(cpu->gpr[3]>=GC_RAM_BASE){ uint8_t* p=g_cpu.ram+(cpu->gpr[3]-GC_RAM_BASE);
-          int n=0; for(;n<23;n++){ if(p+n>=g_cpu.ram+g_cpu.ram_size) break; char ch=(char)p[n]; if(!ch) break; pb[n]=(ch>=32&&ch<127)?ch:'.'; } pb[n]=0; }
+          int n=0; for(;n<23;n++){ if(p+n>=g_cpu.ram+g_cpu.ram_size) break; char ch=(char)p[n]; if(!ch) break; pb[n]=(ch>=32&&ch<127)?ch:'.'; } pb[n]=0;
+          // fzEYzb159: hex dump of the path bytes — the REL-built path #3
+          // arrives garbled ('enem.M...e/...eMM.bin', 16DF8 returns -1),
+          // so downstream offset/len are garbage. Hex pinpoints which byte
+          // positions the interp path-decoder gets wrong.
+          int m=0; for(;m<32;m++){ if(p+m>=g_cpu.ram+g_cpu.ram_size) break;
+            hx[m*2]="0123456789ABCDEF"[(p[m]>>4)&15]; hx[m*2+1]="0123456789ABCDEF"[p[m]&15]; } hx[m*2]=0; }
         uint32_t _tg=0xDEADu,_b12=0xDEADu; uint32_t _blk=cpu->gpr[3];
         if(addr==0x80019354u||addr==0x80019430u){ guest_read32(_blk+8u,&_tg); guest_read32(_blk+12u,&_b12); }
-        fprintf(stderr,"[dvdsm] %s path='%s' r4=0x%08X blk=0x%08X tag=%u b12=%u lr=0x%08X (#%u)\n",
+        fprintf(stderr,"[dvdsm] %s path='%s' hex=%s r4=0x%08X blk=0x%08X tag=%u b12=%u lr=0x%08X (#%u)\n",
         addr==0x80016DF8u?"16DF8-path2entry":addr==0x8001687Cu?"1687C-diskid":addr==0x80019354u?"19354-tag1":addr==0x80019430u?"19430-tag4-READ":"16394-DVDLowRead",
-        pb, r4, _blk, _tg, _b12, cpu->lr, *c); }
+        pb, hx, r4, _blk, _tg, _b12, cpu->lr, *c); }
       return false; }
     // fzEYy probe removed: 18DD8/18E08 never fire (mid-chain natives).
     // fzEYx/fzEYzb3/fzEYv probes removed: 18E34 et al / 18F04 et al /
@@ -3422,15 +3428,27 @@ void recomp_run_slice(void){
               bool in_heap = pc >= 0x81000000u && pc < 0x81800000u;
               if(in_heap && g_cpu.exception==0){
                 int budget = 10000;
-                bool progress = false;
                 while(budget-- > 0){
                   u32 cur = g_cpu.pc;
-                  if(cur < 0x81000000u || cur >= 0x81800000u){ progress = true; break; }
+                  // fzEYzb157: bl into a DOL chunk must NOT break the
+                  // interpreter loop — dolrecomp_call the DOL pc inline
+                  // (the [relinterp] log shows bursts dying at exactly such
+                  // returns: 79888/11424/03458/17160). Only heap pcs and
+                  // the callback sentinel sequence through here.
+                  // fzEYzb159: faults (FP/STWCX/exception vectors) break out
+                  // to the slice loop, which owns vector/rfi/FP-resume
+                  // handling — the interp loop must not dispatch vectors.
                   if(g_cpu.exception) break;
+                  if(cur == HLE_CALLBACK_RETURN){
+                    if(dol_hle_handle_callback_return(&g_cpu, cur)) continue;
+                    break; }
+                  if(cur < 0x81000000u || cur >= 0x81800000u){
+                    if(!dolrecomp_call(&g_cpu, cur)) break;
+                    if(g_cpu.exception) break;
+                    continue; }
                   if(g_cpu.downcount < -800) g_cpu.downcount += 1000;
                   g_cpu.timebase += 1u;
                   if(!rel_interp_step(&g_cpu, cur)) break;
-                  if(g_cpu.pc != cur + 4 && g_cpu.pc != cur) { progress = true; }
                 }
                 { static unsigned _n=0; if(++_n<=4||_n%200==0)
                   fprintf(stderr,"[relinterp] pc=0x%08X lr=0x%08X budget_left=%d exc=%u (#%u)\n",
