@@ -883,9 +883,20 @@ static void hle_fallback(CPUState* cpu, uint32_t raw, uint32_t cia){
     ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
 }
 static bool hle_host_call(CPUState* cpu, uint32_t addr){
-    // fzEWe (answered): m64 0->1 fires ONLY at A374-entry (native tail of
-    // the 17958 success stores); no 1->0 ever with valid r13 — the "clear"
-    // was an r13==0 context-switch alias. m64 is set-once, never cleared.
+    // fzEWe (CORRECTED via decomp — old note was wrong): FatalErrorFlag
+    // (m64, -31464) 0->1 fires in cbForStateError's NATIVE tail (1799C
+    // stw r3=1), reached via the 17984-bl-1A2EC path on NON-0x10 results.
+    // The observed transition (17958-entry m64=0 → 179BC-entry m64=1)
+    // brackets exactly those two stores. It is NOT set-once: 179C8 reads
+    // m56-word... precisely: 179BC lwz m56-lbl_801A68E0; if nonzero the
+    // 179C8/179D0 leg files m56=0 (clears it); m64 itself is never cleared
+    // here (only cbForStateError's sibling paths re-file it). Callers of
+    // 17958: 18D60-bl-17958 (inside cbForStateBusy) — but OUR runs take
+    // the r3==0x10 leg? No: probe183 shows 16920 r3=0x80017958 (the
+    // STOPMOTOR issue from 1923C inside the 18D1C completion path), then
+    // 17958-entry with m64=0. So the STOPMOTOR completion runs 17958 with
+    // a non-0x10 result → 17984 path → files FatalErrorFlag=1. m64=1 then
+    // steers 18820 (stateReady pop leg) down the consume path.
     // fzD5/fzD6: AEDC is `bl AC44` with NO downcount (falls through from
     // AED8, no dispatch point) — like AEC8 it NEVER fires as a probe, healthy
     // or DVD. The chain AECC->AED0->AED4->AED8->AEDC->AC44 runs native inside
@@ -911,9 +922,13 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _m=0; if(++_m<=6) fprintf(stderr,"[watch] 16920 r3=0x%08X r30=0x%08X r31=0x%08X tb=0x%llX lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->gpr[30], cpu->gpr[31], (unsigned long long)cpu->timebase, cpu->lr, _m);
       return false; }
-    // fzCH: 17958-chain (gate writer 1799C inside) — dispatched entry?
-    // Dump r3 (the 0x10-compare arg) + r13 vars to see if it ever runs and
-    // with what state. Its callers: 18D60 bl 17958 (inside 18D1C body).
+    // fzCH (decomp: 17958 = cbForStateError): the 0x10-compare arg decides
+    // stateTimeout leg (r3==0x10: b12=-1 + DVDReset + recurse) vs the
+    // 17984 leg (fn_8001A2EC, DummyBlock→executing, FatalErrorFlag=1,
+    // slot-invoke r3=-1, m56-conditional slot-invoke r3=0, stateReady).
+    // Its callers: 18D60-bl-17958 (inside cbForStateBusy) + stateTimeout's
+    // tail. Probe183: STOPMOTOR completion → 17958 with m64=0 → 179BC
+    // with m64=1, i.e. the 17984 leg. Dump r3 + m64/m60 to confirm.
     if(addr==0x80017958u||addr==0x800179BCu||addr==0x800187CCu||addr==0x80018820u){
       static unsigned _h1=0,_h2=0,_h3=0,_h4=0;
       unsigned *c=addr==0x80017958u?&_h1:addr==0x800179BCu?&_h2:addr==0x800187CCu?&_h3:&_h4; (*c)++;
@@ -942,9 +957,10 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         cpu->gpr[3], cpu->gpr[4], cpu->ctr, cpu->lr, *c);
       if(*c%5000000==0) fprintf(stderr,"[watch] 19FA4-loop 19FC4=%u 19FCC=%u 19FDC=%u 19FE0=%u 19FE4=%u 19FEC=%u\n", _m1,_m2,_m3,_m4,_m5,_m6);
       return false; }
-    // fzEYi: 1A178 reports per completion from lr=19230 (report-then-motor:
-    // 19218 files b12=-1, 1922C calls 1A178, 19230+ issues STOPMOTOR via
-    // 16920). Normal path, not a failure — the motor issue follows it.
+    // fzEYi (decomp: 1A178 = __DVDStoreErrorCode): reports per completion
+    // from lr=19230 (report-then-motor: 19218 files b12=-1, 1922C calls
+    // 1A178, 19230+ issues STOPMOTOR via 16920). Normal path, not a
+    // failure — the motor issue follows it.
     if(addr==0x8001A178u){
       static unsigned _n=0; _n++;
       if(_n<=8||_n%5000000==0){ uint32_t m60=0,m56=0,m52=0,d0=0,d4=0,d8=0;
@@ -954,9 +970,9 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[dvdsm] 1A178 lr=0x%08X r3=0x%08X m60=%u m56=%u m52=0x%08X drive=%08X/%08X/%08X (#%u)\n",
           cpu->lr, cpu->gpr[3], m60, m56, m52, d0, d4, d8, _n); }
       return false; }
-    // fzEW: 16850 (dispatched entry) is the error-report fn called from
-    // MANY legs (18E60, 188E4, 188FC, 189BC...). Caller lr distinguishes:
-    // lr=18E60 => m56==0 error leg; lr=188E4/188FC => m48-cascade legs.
+    // fzEW (decomp: 16850 = DVDLowWaitCoverClose, weak — NOT an error
+    // reporter). Called from the 189xx ResumeFromHere legs (cover-close
+    // waits). Caller lr distinguishes which leg; r3 = callback.
     if(addr==0x80016850u){
       static unsigned _v=0; if(++_v<=6||_v%5000000==0)
         fprintf(stderr,"[dvdsm] 16850-errorleg r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
