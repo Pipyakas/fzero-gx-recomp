@@ -1812,11 +1812,27 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // Dump r1 + [r1+12] (exactly what 1190C's lwz loads — host_call runs
     // before the chunk, but no store precedes the lwz, so the live read is
     // what the blr will target) + lr. Read-only, first-6.
-    if(addr==0x8001190Cu){
-      static unsigned _n=0; if(++_n<=6){ uint32_t w12=0xDEADu;
-        guest_read32(cpu->gpr[1]+12u,&w12);
-        fprintf(stderr,"[park] 1190C r1=0x%08X [r1+12]=0x%08X lr=0x%08X ctr=0x%08X (#%u)\n",
-          cpu->gpr[1], w12, cpu->lr, cpu->ctr, _n); }
+    // fzEYzb147 (probe180: 1190C NEVER fires but A000 spins lr=1190C —
+    // RESOLVED statically: 9FFC is `sync` with NO downcount (fallthrough
+    // native into A000), and 11908-bl-9FFC/1190C both lack dispatch
+    // visibility except via chunk-entry: the whole 118FC->11908->9FFC->
+    // A000->1190C? chain runs NATIVE from ONE 118FC dispatch (same class
+    // as the 6FE14/6FEA8 video loop, fzEYzb138). But WAIT: 11908's `bl`
+    // targets 9FFC (sync), whose fallthrough is A000 — 1190C is lr, NOT
+    // a return target: the halt path NEVER returns through 1190C. The
+    // A000 lr=1190C is just the stale bl-lr. So 1190C silence is CORRECT
+    // and the halt is entered once. Only 118FC-sync + 09FFC-fence (both
+    // HAVE ctx->pc) are observable: count them. 1191C/1192C/11934 are the
+    // flag-poller return legs (11920 lwz [0x80003B94], EQ->11934 r3=0,
+    // else 1192C r3=1): fire iff 118FC returns into the poller.
+    if(addr==0x8001191Cu||addr==0x8001192Cu||addr==0x80011934u){
+      static unsigned _m=0,_k=0,_j=0;
+      unsigned *c=addr==0x8001191Cu?&_m:addr==0x8001192Cu?&_k:&_j; (*c)++;
+      const char* nm=addr==0x8001191Cu?"1191C-poller":addr==0x8001192Cu?"1192C-ret1":"11934-ret0";
+      if(*c<=8){ uint32_t f=0xDEADu;
+        guest_read32(0x80003B94u,&f);
+        fprintf(stderr,"[park] %s r1=0x%08X flag3B94=%d lr=0x%08X (#%u)\n",
+          nm, cpu->gpr[1], (int32_t)f, cpu->lr, *c); }
       return false; }
     // fzEYzb140: 7A060 init-table runner census (probe173 parks at A000 with
     // lr=1190C <- 7A138 bl 118FC <- 7A118 bl 7ED8C: 7A060 ran to its tail).
