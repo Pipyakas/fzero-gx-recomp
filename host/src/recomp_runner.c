@@ -1846,13 +1846,18 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         fprintf(stderr,"[cont] %s r3=0x%08X r4=0x%08X r30=0x%08X r31=0x%08X [r30+52]=0x%08X ctr=0x%08X lr=0x%08X (#%u)\n",
           nm,cpu->gpr[3],cpu->gpr[4],cpu->gpr[30],cpu->gpr[31],w52,cpu->ctr,cpu->lr,*cc); }
       return false; }
-    if(addr==0x8000E030u||addr==0x8000E5A8u||addr==0x800793D4u||addr==0x8000B324u||addr==0x8000B31Cu){
-      static unsigned _a=0,_b=0,_c=0,_d=0,_e=0;
-      unsigned *cc=addr==0x8000E030u?&_a:addr==0x8000E5A8u?&_b:addr==0x800793D4u?&_c:addr==0x8000B324u?&_d:&_e; (*cc)++;
-      const char* nm=addr==0x8000E030u?"E030":addr==0x8000E5A8u?"E5A8":addr==0x800793D4u?"793D4":addr==0x8000B324u?"B324":"B31C";
-      if(*cc<=8)
-        fprintf(stderr,"[cont] %s-call r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X lr=0x%08X (#%u)\n",
-          nm,cpu->gpr[3],cpu->gpr[4],cpu->gpr[5],cpu->gpr[6],cpu->gpr[7],cpu->lr,*cc);
+    if(addr==0x8000E030u||addr==0x8000E5A8u||addr==0x800793D4u||addr==0x8000B324u||addr==0x8000B31Cu||addr==0x800793E8u||addr==0x800794D8u||addr==0x8007ED8Cu||addr==0x800798D0u){
+      static unsigned _a=0,_b=0,_c=0,_d=0,_e=0,_f=0,_g=0,_h=0,_i=0;
+      unsigned *cc=addr==0x8000E030u?&_a:addr==0x8000E5A8u?&_b:addr==0x800793D4u?&_c:addr==0x8000B324u?&_d:addr==0x8000B31Cu?&_e:addr==0x800793E8u?&_f:addr==0x800794D8u?&_g:addr==0x8007ED8Cu?&_h:&_i; (*cc)++;
+      const char* nm=addr==0x8000E030u?"E030":addr==0x8000E5A8u?"E5A8":addr==0x800793D4u?"793D4":addr==0x8000B324u?"B324":addr==0x8000B31Cu?"B31C":addr==0x800793E8u?"793E8-cachegate":addr==0x800794D8u?"794D8-b8ac":addr==0x8007ED8Cu?"7ED8C-nopret":"798D0-restore";
+      if(*cc<=8){ uint32_t cg=0xDEADu;
+        if(addr==0x800793E8u||addr==0x800794D8u) guest_read32(cpu->gpr[13]-30216u,&cg);
+        fprintf(stderr,"[cont] %s-call r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X r7=0x%08X%s lr=0x%08X (#%u)\n",
+          nm,cpu->gpr[3],cpu->gpr[4],cpu->gpr[5],cpu->gpr[6],cpu->gpr[7],
+          (addr==0x800793E8u||addr==0x800794D8u)?(cg==0xDEADu?"":""):"",
+          cpu->lr,*cc);
+        if(addr==0x800793E8u||addr==0x800794D8u)
+          fprintf(stderr,"[cont]   cachegate30216=%u r25=0x%08X r26=0x%08X\n",cg,cpu->gpr[25],cpu->gpr[26]); }
       return false; }
     // fzEYzb143: 7A060 head census (native prestretch: 7A070-gate is the
     // native lwz+cmpwi at 7A07C-entry; 7A08C/7A090 bl-continuations prove
