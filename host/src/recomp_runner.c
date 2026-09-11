@@ -1800,9 +1800,23 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       return false; }
     if(addr==0x8000A000u){
       static unsigned _v4=0; _v4++;
-      if(_v4<=4||_v4%5000000==0)
-        fprintf(stderr,"[wait4] A000-spin r3=%u lr=0x%08X (#%u)\n",
-          cpu->gpr[3], cpu->lr, _v4);
+      if(_v4<=4||_v4%5000000==0){ uint32_t s0=0xDEADu,s4=0xDEADu;
+        guest_read32(cpu->gpr[1],&s0); guest_read32(cpu->gpr[1]+4u,&s4);
+        fprintf(stderr,"[park] A000 r1=0x%08X lr=0x%08X [r1]=0x%08X [r1+4]=0x%08X r3=%u (#%u)\n",
+          cpu->gpr[1], cpu->lr, s0, s4, cpu->gpr[3], _v4); }
+      return false; }
+    // fzEYzb145: A000-park mechanism (probe178: flow reaches A000 once via
+    // 1190C (lr=1190C) and spins 250M+; 7A060/7A13C/32AC never re-fire, so
+    // 1190C's blr did NOT return to 7A13C — r0=[r1+12] must have read A000,
+    // yet the later bt shows [0x801B791C]=7A13C intact with r1=0x801B7910).
+    // Dump r1 + [r1+12] (exactly what 1190C's lwz loads — host_call runs
+    // before the chunk, but no store precedes the lwz, so the live read is
+    // what the blr will target) + lr. Read-only, first-6.
+    if(addr==0x8001190Cu){
+      static unsigned _n=0; if(++_n<=6){ uint32_t w12=0xDEADu;
+        guest_read32(cpu->gpr[1]+12u,&w12);
+        fprintf(stderr,"[park] 1190C r1=0x%08X [r1+12]=0x%08X lr=0x%08X ctr=0x%08X (#%u)\n",
+          cpu->gpr[1], w12, cpu->lr, cpu->ctr, _n); }
       return false; }
     // fzEYzb140: 7A060 init-table runner census (probe173 parks at A000 with
     // lr=1190C <- 7A138 bl 118FC <- 7A118 bl 7ED8C: 7A060 ran to its tail).
@@ -1879,18 +1893,18 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // READ-issue path), 19B9C (198FC result: 0=fail?), 19BB4 (b12 poll),
     // 1A31C/1A3F4 (cascade entries). All have ctx->pc (dispatchable).
     // Read-only, first-8 prints.
-    if(addr==0x80019B78u||addr==0x8001996Cu||addr==0x80019988u||addr==0x800199A8u||addr==0x80019B9Cu||addr==0x80019BB4u||addr==0x8001A31Cu||addr==0x8001A3F4u){
-      static unsigned _e=0,_g=0,_m=0,_t=0,_r=0,_p=0,_c=0,_f=0;
-      unsigned *cc=addr==0x80019B78u?&_e:addr==0x8001996Cu?&_g:addr==0x80019988u?&_m:addr==0x800199A8u?&_t:addr==0x80019B9Cu?&_r:addr==0x80019BB4u?&_p:addr==0x8001A31Cu?&_c:&_f; (*cc)++;
-      const char* nm=addr==0x80019B78u?"19B78-submit":addr==0x8001996Cu?"1996C-m56gate":addr==0x80019988u?"19988-m56zero":addr==0x800199A8u?"199A8-tag4issue":addr==0x80019B9Cu?"19B9C-result":addr==0x80019BB4u?"19BB4-b12poll":addr==0x8001A31Cu?"1A31C-cascade":"1A3F4-reg";
-      if(*cc<=8){ uint32_t b8=0xDEADu,b12=0xDEADu,m56=0xDEADu;
+    if(addr==0x80019B78u||addr==0x8001996Cu||addr==0x80019988u||addr==0x800199A8u||addr==0x80019B9Cu||addr==0x80019BB4u||addr==0x8001A31Cu||addr==0x8001A3F4u||addr==0x80019B50u||addr==0x80019B58u||addr==0x8001994Cu||addr==0x80019980u||addr==0x800199B0u||addr==0x800199C0u||addr==0x800199DCu||addr==0x80019A4Cu||addr==0x80019A68u||addr==0x80019A9Cu||addr==0x80019AE4u){
+      static unsigned _e=0,_g=0,_m=0,_t=0,_r=0,_p=0,_c=0,_f=0,_s1=0,_s2=0,_s3=0,_s4=0,_s5=0,_s6=0,_s7=0,_s8=0,_s9=0,_sA=0;
+      unsigned *cc=addr==0x80019B78u?&_e:addr==0x8001996Cu?&_g:addr==0x80019988u?&_m:addr==0x800199A8u?&_t:addr==0x80019B9Cu?&_r:addr==0x80019BB4u?&_p:addr==0x8001A31Cu?&_c:addr==0x8001A3F4u?&_f:addr==0x80019B50u?&_s1:addr==0x80019B58u?&_s2:addr==0x8001994Cu?&_s3:addr==0x80019980u?&_s4:addr==0x800199B0u?&_s5:addr==0x800199C0u?&_s6:addr==0x800199DCu?&_s7:addr==0x80019A4Cu?&_s8:addr==0x80019A68u?&_s9:addr==0x80019A9Cu?&_sA:&_f; (*cc)++;
+      const char* nm=addr==0x80019B78u?"19B78-submit":addr==0x8001996Cu?"1996C-m56gate":addr==0x80019988u?"19988-m56zero":addr==0x800199A8u?"199A8-tag4issue":addr==0x80019B9Cu?"19B9C-result":addr==0x80019BB4u?"19BB4-b12poll":addr==0x8001A31Cu?"1A31C-cascade":addr==0x8001A3F4u?"1A3F4-reg":addr==0x80019B50u?"19B50-join":addr==0x80019B58u?"19B58-epi":addr==0x8001994Cu?"1994C-r30gate":addr==0x80019980u?"19980-b12zero":addr==0x800199B0u?"199B0-19FFC":addr==0x800199C0u?"199C0-slotgate":addr==0x800199DCu?"199DC-r30b":addr==0x80019A4Cu?"19A4C-m56b":addr==0x80019A68u?"19A68-m56w":addr==0x80019A9Cu?"19A9C-b12cmp":"?";
+      if(*cc<=8){ uint32_t b8=0xDEADu,b12=0xDEADu,m56=0xDEADu,s40=0xDEADu;
         uint32_t blk=(addr==0x80019B78u||addr==0x80019BB4u)?cpu->gpr[3]:cpu->gpr[30];
         if(addr==0x8001996Cu||addr==0x80019988u||addr==0x800199A8u) blk=cpu->gpr[29];
         if(addr==0x80019B9Cu) blk=cpu->gpr[30];
-        if(blk>=0x80000000u){ guest_read32(blk+8u,&b8); guest_read32(blk+12u,&b12); }
+        if(blk>=0x80000000u){ guest_read32(blk+8u,&b8); guest_read32(blk+12u,&b12); guest_read32(blk+40u,&s40); }
         guest_read32(cpu->gpr[13]-31456u,&m56);
-        fprintf(stderr,"[submit] %s r3=0x%08X r30=0x%08X blk=0x%08X tag=%u b12=%d m56=%u lr=0x%08X (#%u)\n",
-          nm,cpu->gpr[3],cpu->gpr[30],blk,b8,(int32_t)b12,m56,cpu->lr,*cc); }
+        fprintf(stderr,"[submit] %s r3=0x%08X r30=0x%08X blk=0x%08X tag=%u b12=%d slot40=0x%08X m56=%u lr=0x%08X (#%u)\n",
+          nm,cpu->gpr[3],cpu->gpr[30],blk,b8,(int32_t)b12,s40,m56,cpu->lr,*cc); }
       return false; }
     if(addr==0x8006FEA0u){
       static unsigned _f2=0; _f2++;
