@@ -421,6 +421,25 @@ static bool guest_read32(uint32_t addr, uint32_t* out); // fwd: def after chassi
 // Command words arrive as raw MMIO writes (not shifted); offset = c1<<2.
 // Only the DMA-read path is served; everything else completes as ERROR so
 // the guest sees a real failure instead of a stuck status bit.
+// fzEYzb164: cancel the DVD timeout alarm before every LOW completion.
+// __DVDInterruptHandler unconditionally runs OSCancelAlarm(AlarmForTimeout,
+// .bss 0x8015CDD8, symbols.txt:2765) on each DI interrupt before invoking
+// the low callback; our HLE bypasses the handler and queues the callback
+// directly, so the static alarm node stayed queued across commands. The
+// next DVDLow*'s OSSetAlarm then re-inserted the still-queued node, the
+// InsertAlarm walk met the node against itself (equal key -> ADD8 to self)
+// and spun in AD1C forever (probe195: guard trip at AD1C, SELF tail at
+// CDD8, uniq frozen at 1489). Queue the guest's own OSCancelAlarm first;
+// it is a safe no-op when the alarm is not queued (AF98/AFA4 early-out),
+// and the trampoline runs it (short, DOL chunks) before the nested LOW
+// callback in the same frame, preserving issuer r30/r31 (AF78 saves and
+// restores them; poll_nested does not touch them).
+static void queue_di_completion(CPUState* cpu, u32 cb, u32 r3, u32 block){
+    { extern void dol_hle_note_command_issuer(CPUState* cpu);
+      dol_hle_note_command_issuer(cpu); }
+    dol_hle_queue_guest_callback(0x8000AF78u, 0x8015CDD8u, 0u);
+    dol_hle_queue_guest_callback(cb, r3, block);
+}
 static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
     (void)user;
     if(!cmd || !cmd->cpu) return DOL_DI_COMMAND_ERROR;
@@ -503,8 +522,6 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           // decode — 18DD8 is "inquiry succeeded, issue next inquiry",
           // not "advance to data". REVERTED to no-seed; the loop needs a
           // different key, not m56.)
-          { extern void dol_hle_note_command_issuer(CPUState* cpu);
-            dol_hle_note_command_issuer(cmd->cpu); }
           // fzEYzb153 (supersedes fzEYzb38/fzEYzb53): LOW completion
           // status needs TCINT bit0 set. r3=0 (and 32: both even) takes
           // the 18F38->1920C error leg (STOPMOTOR + FatalErrorFlag=1,
@@ -513,7 +530,7 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           // transfer-complete path (slot gets 32, stateReady, tag1
           // dequeues). The SLOT result (length) is filed by the guest
           // itself at 1901C, not by this r3.
-          dol_hle_queue_guest_callback(cb, 1, block); }
+          queue_di_completion(cmd->cpu, cb, 1, block); }
         return DOL_DI_COMMAND_COMPLETE;
     }
     // Motor/stop/reset class (dolsdk2001 DVDLowStopMotor 0xE3, Reset etc.):
@@ -613,7 +630,7 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           uint32_t cb=0x80017958u; guest_read32(cmd->cpu->gpr[13]-31584u, &cb);
           if(cb < GC_RAM_BASE) cb = 0x80017958u;
           { static int _m=0; if(_m<3){ fprintf(stderr,"[di] STOPMOTOR blk=0x%08X (block untouched, fzEG) -> 0x%08X\n", blk, cb); _m++; } }
-          dol_hle_queue_guest_callback(cb, 0, blk); }
+          queue_di_completion(cmd->cpu, cb, 0, blk); }
         return DOL_DI_COMMAND_COMPLETE;
     }
     if((c0 & 0xFF000000u) == 0xA8000000u
@@ -651,15 +668,14 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
                     // fzEYzb153: queue the LOW callback (18D1C cbForStateBusy)
                     // with TCINT bit0 set, mirroring the INQUIRY fix above.
                     // Without this a served READ never completes guest-side.
+                    // (fzEYzb164: alarm-cancel first, via queue_di_completion.)
                     { uint32_t block = 0x8015BF20u;
                       guest_read32(cmd->cpu->gpr[13]-31488u, &block);
                       if(block < GC_RAM_BASE) block = 0x8015BF20u;
                       uint32_t cb = 0x80018D1Cu;
                       guest_read32(cmd->cpu->gpr[13]-31584u, &cb);
                       if(cb < GC_RAM_BASE) cb = 0x80018D1Cu;
-                      { extern void dol_hle_note_command_issuer(CPUState* cpu);
-                        dol_hle_note_command_issuer(cmd->cpu); }
-                      dol_hle_queue_guest_callback(cb, 1, block); }
+                      queue_di_completion(cmd->cpu, cb, 1, block); }
                     return DOL_DI_COMMAND_COMPLETE;
                 }
             }
@@ -671,9 +687,7 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           uint32_t cb = 0x80018D1Cu;
           guest_read32(cmd->cpu->gpr[13]-31584u, &cb);
           if(cb < GC_RAM_BASE) cb = 0x80018D1Cu;
-          { extern void dol_hle_note_command_issuer(CPUState* cpu);
-            dol_hle_note_command_issuer(cmd->cpu); }
-          dol_hle_queue_guest_callback(cb, 1, block); }
+          queue_di_completion(cmd->cpu, cb, 1, block); }
         return DOL_DI_COMMAND_COMPLETE;
     }
     { static int _n=0; if(_n<6){ fprintf(stderr,"[di] exec UNHANDLED c0=0x%08X c1=0x%08X c2=0x%08X dma=%u wr=%u addr=0x%08X len=%u\n", cmd->command[0], cmd->command[1], cmd->command[2], cmd->dma?1:0, cmd->write?1:0, cmd->dma_address, cmd->dma_length); _n++; } }
