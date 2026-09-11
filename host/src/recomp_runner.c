@@ -1703,12 +1703,12 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // (6354 returns to game); 18868 counts drain-skip legs; 175B0 proves
     // the 6340 blrl returned into the slot epilogue.
     if(addr==0x8000659Cu||addr==0x80006340u||addr==0x800058ACu||addr==0x80018868u||addr==0x800175B0u||addr==0x80006388u||addr==0x80006394u||addr==0x800058BCu||addr==0x800058C4u||addr==0x80017228u||addr==0x80006354u||addr==0x800065D8u||addr==0x800065E4u||addr==0x800065ECu){
-      static unsigned _p=0,_c=0,_o=0,_k=0,_e=0,_l=0,_r=0,_b=0,_q=0,_u=0,_z=0,_d=0,_v=0,_w=0;
-      unsigned *c=addr==0x8000659Cu?&_p:addr==0x80006340u?&_c:addr==0x800058ACu?&_o:addr==0x80018868u?&_k:addr==0x800175B0u?&_e:addr==0x80006388u?&_l:addr==0x80006394u?&_r:addr==0x800058BCu?&_b:addr==0x800058C4u?&_q:addr==0x80006354u?&_z:addr==0x800065D8u?&_d:addr==0x800065E4u?&_v:&_w; (*c)++;
+      static unsigned _p=0,_c=0,_o=0,_k=0,_e=0,_l=0,_r=0,_b=0,_q=0,_u=0,_z=0,_d=0,_v=0,_w=0,_y=0;
+      unsigned *c=addr==0x8000659Cu?&_p:addr==0x80006340u?&_c:addr==0x800058ACu?&_o:addr==0x80018868u?&_k:addr==0x800175B0u?&_e:addr==0x80006388u?&_l:addr==0x80006394u?&_r:addr==0x800058BCu?&_b:addr==0x800058C4u?&_q:addr==0x80017228u?&_y:addr==0x80006354u?&_z:addr==0x800065D8u?&_d:addr==0x800065E4u?&_v:&_w; (*c)++;
       if(*c<=4||*c%20000000==0){ uint32_t fl=0xDEADu,t=0xDEADu;
         guest_read32(cpu->gpr[13]-31973u,&fl); guest_read32(cpu->gpr[13]-31972u,&t);
         fprintf(stderr,"[wait4] %s r3=0x%08X r4=0x%08X flagB=%u tgt31972=0x%08X lr=0x%08X (#%u)\n",
-          addr==0x8000659Cu?"659C-pump":addr==0x80006340u?"6340-cb":addr==0x800058ACu?"58AC-openret":addr==0x80018868u?"18868-skip":addr==0x800175B0u?"175B0-slotret":addr==0x80006388u?"6388-poll":addr==0x80006394u?"6394-openret":addr==0x800058BCu?"58BC-postopen":addr==0x800058C4u?"58C4":addr==0x80006354u?"6354-entry":addr==0x800065D8u?"65D8-pretgt":addr==0x800065E4u?"65E4-bctrl":"65EC-posttgt",
+          addr==0x8000659Cu?"659C-pump":addr==0x80006340u?"6340-cb":addr==0x800058ACu?"58AC-openret":addr==0x80018868u?"18868-skip":addr==0x800175B0u?"175B0-slotret":addr==0x80006388u?"6388-poll":addr==0x80006394u?"6394-openret":addr==0x800058BCu?"58BC-postopen":addr==0x800058C4u?"58C4":addr==0x80017228u?"17228-issuer":addr==0x80006354u?"6354-entry":addr==0x800065D8u?"65D8-pretgt":addr==0x800065E4u?"65E4-bctrl":"65EC-posttgt",
           cpu->gpr[3], cpu->gpr[4], (fl>>24)&0xFFu, t, cpu->lr, *c); }
       return false; }
     // fzEYzb136: 659C-pump interior. 659C fires ONCE then the opener
