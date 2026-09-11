@@ -1909,6 +1909,19 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // READ-issue path), 19B9C (198FC result: 0=fail?), 19BB4 (b12 poll),
     // 1A31C/1A3F4 (cascade entries). All have ctx->pc (dispatchable).
     // Read-only, first-8 prints.
+    // fzEYzb150 (decomp-resolved naming, karamzov123/fzero-gx-decomp):
+    // 19B78 = DVDCancel (NOT a submit — the game calls DVDCancelSync on
+    // the block after dvd_read_sync_wait returns!); 198FC =
+    // __DVDDequeueWaitingQueue; 1996C = m56==0 test; 19988 = m56-files
+    // leg; 199A8 = tag==4||tag==1 leg -> bl DVDLowStopMotorAtNextInt
+    // (16D50 = StopAtNextInt flag-setter, NOT a READ issuer); 199B0 =
+    // fn_80019FFC leg (b12=10 filer); 19B9C = dequeue-result test
+    // (r3!=0 = dequeued); 19BB4 = DVDCancel's b12-poll loop; 19B50 =
+    // dequeue join; 19B58 = dequeue epilogue (r3=1). The 19430-tag4
+    // (DVDReadAbsAsyncForBS) callers are ONLY the fstload cb @1A31C
+    // (boot BB2/FST chain) — never on the GameMainLoopFrame path. The
+    // game path issues NO tag4 READ here by design: DVDReadPrio(tag1)
+    // + DVDCancelSync is the whole open+cancel sequence per frame.
     if(addr==0x80019B78u||addr==0x8001996Cu||addr==0x80019988u||addr==0x800199A8u||addr==0x800199ACu||addr==0x80016D50u||addr==0x80019B9Cu||addr==0x80019BB4u||addr==0x8001A31Cu||addr==0x8001A3F4u||addr==0x80019B50u||addr==0x80019B58u||addr==0x8001994Cu||addr==0x80019980u||addr==0x800199B0u||addr==0x800199C0u||addr==0x800199DCu||addr==0x80019A4Cu||addr==0x80019A68u||addr==0x80019A9Cu||addr==0x80019AE4u){
       static unsigned _e=0,_g=0,_m=0,_t=0,_r=0,_p=0,_c=0,_f=0,_s1=0,_s2=0,_s3=0,_s4=0,_s5=0,_s6=0,_s7=0,_s8=0,_s9=0,_sA=0,_sB=0,_sC=0;
       unsigned *cc=addr==0x80019B78u?&_e:addr==0x8001996Cu?&_g:addr==0x80019988u?&_m:addr==0x800199A8u?&_t:addr==0x800199ACu?&_sB:addr==0x80016D50u?&_sC:addr==0x80019B9Cu?&_r:addr==0x80019BB4u?&_p:addr==0x8001A31Cu?&_c:addr==0x8001A3F4u?&_f:addr==0x80019B50u?&_s1:addr==0x80019B58u?&_s2:addr==0x8001994Cu?&_s3:addr==0x80019980u?&_s4:addr==0x800199B0u?&_s5:addr==0x800199C0u?&_s6:addr==0x800199DCu?&_s7:addr==0x80019A4Cu?&_s8:addr==0x80019A68u?&_s9:addr==0x80019A9Cu?&_sA:&_f; (*cc)++;
