@@ -505,7 +505,15 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           // different key, not m56.)
           { extern void dol_hle_note_command_issuer(CPUState* cpu);
             dol_hle_note_command_issuer(cmd->cpu); }
-          dol_hle_queue_guest_callback(cb, 0, block); }
+          // fzEYzb153 (supersedes fzEYzb38/fzEYzb53): LOW completion
+          // status needs TCINT bit0 set. r3=0 (and 32: both even) takes
+          // the 18F38->1920C error leg (STOPMOTOR + FatalErrorFlag=1,
+          // which poisons every later dequeue, so tag1 never reaches
+          // DVDLowRead and no 0xA8 ever issues). r3=1 runs the
+          // transfer-complete path (slot gets 32, stateReady, tag1
+          // dequeues). The SLOT result (length) is filed by the guest
+          // itself at 1901C, not by this r3.
+          dol_hle_queue_guest_callback(cb, 1, block); }
         return DOL_DI_COMMAND_COMPLETE;
     }
     // Motor/stop/reset class (dolsdk2001 DVDLowStopMotor 0xE3, Reset etc.):
@@ -627,6 +635,10 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
             // fst.bin is 129405B; cap at 1MB.
             if(fsz < 1024*1024){
                 uint32_t ga = cmd->dma_address;
+                // fzEYzb154: DI DMAADDR carries a 26-bit PHYSICAL address
+                // (GXRuntime masks to 0x03FFFFE0), so a read target logs as
+                // 0x0155AD80, not 0x8155AD80. Same alias fix as INQUIRY.
+                if(ga < cmd->cpu->ram_size) ga |= GC_RAM_BASE;
                 u8* dst = NULL;
                 if(ga >= GC_RAM_BASE && ga + cmd->dma_length <= GC_RAM_BASE + cmd->cpu->ram_size)
                     dst = cmd->cpu->ram + (ga - GC_RAM_BASE);
@@ -636,11 +648,32 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
                     unsigned got = dvd_read_disc_bytes(f, 1024*1024, disc_off, dst, cmd->dma_length);
                     if(got < cmd->dma_length) memset(dst+got, 0, cmd->dma_length-got);
                     { static int _n=0; if(_n<4){ fprintf(stderr,"[di] tree read off=0x%08X got=%u/%u\n", disc_off, got, cmd->dma_length); _n++; } }
+                    // fzEYzb153: queue the LOW callback (18D1C cbForStateBusy)
+                    // with TCINT bit0 set, mirroring the INQUIRY fix above.
+                    // Without this a served READ never completes guest-side.
+                    { uint32_t block = 0x8015BF20u;
+                      guest_read32(cmd->cpu->gpr[13]-31488u, &block);
+                      if(block < GC_RAM_BASE) block = 0x8015BF20u;
+                      uint32_t cb = 0x80018D1Cu;
+                      guest_read32(cmd->cpu->gpr[13]-31584u, &cb);
+                      if(cb < GC_RAM_BASE) cb = 0x80018D1Cu;
+                      { extern void dol_hle_note_command_issuer(CPUState* cpu);
+                        dol_hle_note_command_issuer(cmd->cpu); }
+                      dol_hle_queue_guest_callback(cb, 1, block); }
                     return DOL_DI_COMMAND_COMPLETE;
                 }
             }
         }
         dvd_read_to_guest(cmd->cpu, cmd->dma_address, disc_off, cmd->dma_length);
+        { uint32_t block = 0x8015BF20u;
+          guest_read32(cmd->cpu->gpr[13]-31488u, &block);
+          if(block < GC_RAM_BASE) block = 0x8015BF20u;
+          uint32_t cb = 0x80018D1Cu;
+          guest_read32(cmd->cpu->gpr[13]-31584u, &cb);
+          if(cb < GC_RAM_BASE) cb = 0x80018D1Cu;
+          { extern void dol_hle_note_command_issuer(CPUState* cpu);
+            dol_hle_note_command_issuer(cmd->cpu); }
+          dol_hle_queue_guest_callback(cb, 1, block); }
         return DOL_DI_COMMAND_COMPLETE;
     }
     { static int _n=0; if(_n<6){ fprintf(stderr,"[di] exec UNHANDLED c0=0x%08X c1=0x%08X c2=0x%08X dma=%u wr=%u addr=0x%08X len=%u\n", cmd->command[0], cmd->command[1], cmd->command[2], cmd->dma?1:0, cmd->write?1:0, cmd->dma_address, cmd->dma_length); _n++; } }

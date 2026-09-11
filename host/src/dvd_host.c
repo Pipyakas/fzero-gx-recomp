@@ -197,6 +197,34 @@ unsigned dvd_read_disc_bytes(const uint8_t* fst, unsigned fst_size, unsigned dis
         unsigned cur = disc_off + got;
         // find containing file
         unsigned fi = 0; int found = 0; unsigned fpos = 0, flen = 0, stroff = 0;
+        // fzEYzb155: real fst.bin from the extractor is byte-exact but its
+        // filepos/length words are GARBAGE (fst.bin is a tree artifact, not
+        // the disc FST: entry1358 fze.str claims pos=0x0234F73C while the
+        // file lives at <root>/files/files/fze.str). Selection by disc
+        // offset can't work against these words, so match the REQUESTED
+        // (offset,length) pair against the game's own open table instead:
+        // the guest's 174D0 frame passes entry length as r5 (0x280/0x8C0),
+        // and open entries resolve to known FST entry numbers
+        // (fze.str=1358 len 0x272, fze.sample.rel=1355 len 0x8B8).
+        // For now serve purely by length: the only reads the guest issues
+        // are whole-file tag1 reads, so len identifies the file.
+        // len -> tree-relative path (under <root>/files/files/).
+        const char* bylen = NULL;
+        if(len == 640) bylen = "fze.str";
+        else if(len == 2240 || len == 2232) bylen = "fze.sample.rel";
+        if(bylen){
+            char fpath[MAX_PATH];
+            snprintf(fpath, sizeof(fpath), "%s\\files\\files\\%s", g_root, bylen);
+            FILE* f = fopen(fpath, "rb");
+            if(f){
+                fseek(f, 0, SEEK_END); long fsz = ftell(f); fseek(f, 0, SEEK_SET);
+                unsigned want = len < (unsigned)fsz ? len : (unsigned)fsz;
+                size_t rd = want ? fread(dst, 1, want, f) : 0;
+                fclose(f);
+                if(rd) return (unsigned)rd;
+            }
+            return 0;
+        }
         for(unsigned i=1;i<n;i++){
             const uint8_t* e = fst + (size_t)i*12u;
             if(e[0] != 0) continue; // dir
