@@ -3462,11 +3462,21 @@ void recomp_run_slice(void){
                   if(cur == HLE_CALLBACK_RETURN){
                     if(dol_hle_handle_callback_return(&g_cpu, cur)) continue;
                     break; }
-                  // Inside the interpreter loop: try DOL dispatch first
-                  // for ANY pc (DOL chunks and vectors resolve; heap pcs
-                  // miss and fall through to the single-step below). This
-                  // also lets the loop survive blr/bctrl into DOL code and
-                  // the FP-unavailable vector dance without breaking out.
+                  // Inside the interpreter loop: dispatch DOL-covered pcs
+                  // via dolrecomp_call (host_call probes + chunks run);
+                  // heap REL pcs miss and single-step below. Coverage
+                  // (dolrecomp_find_original), not address range, decides:
+                  // heap bl-targets WITH static chunks (205A0, 1E864,
+                  // 79888, ...) must dispatch — the range test treats them
+                  // as heap and single-steps OS code without chunk
+                  // semantics. Probe209 proved the cost: 205A0 ARQ post
+                  // never dispatched (queue never pumped), REL parked at
+                  // 802161D4 forever; with coverage dispatch it posts,
+                  // the queue pumps, and the REL advances to 802164C4.
+                  if(dolrecomp_find_original(cur)){
+                    if(!dolrecomp_call(&g_cpu, cur)) break;
+                    if(g_cpu.exception) break;
+                    continue; }
                   if(cur < 0x80000000u || (cur >= 0x81800000u && cur < 0xC0000000u) || cur >= 0xC1800000u){
                     if(!dolrecomp_call(&g_cpu, cur)) break;
                     if(g_cpu.exception) break;
