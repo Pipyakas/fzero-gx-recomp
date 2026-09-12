@@ -955,6 +955,27 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _a=0; if(++_a<=8) fprintf(stderr,"[watch] AEDC r3=0x%08X r6=0x%08X r7=0x%08X r30=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->gpr[6], cpu->gpr[7], cpu->gpr[30], cpu->lr, _a);
       return false; }
+    // fzEYzb170: serve OSCancelAlarm (AF78) in hle_host_call. The AF78 chunk
+    // body (OSDisableInterrupts D4F4 + InsertAlarm AD1C walk) parks the probe
+    // tail at D4F4 with EE=0 (log: pc=D4F4 lr=AF98 r1=0x801B75F8 msr=0x1008,
+    // DIpend=1). The queued completion pair (AF78 r3=CDD8 + low callback)
+    // only needs AF78's early-out semantics: [r3]==0 -> unlink-nothing and
+    // return; the alarm is never queued in our runs (AD1C listshape SELF at
+    // CDD8). Serve natively only when the dequeue is a no-op ([alarm]==0,
+    // [alarm+20]==0); otherwise run the native chunk. Bounded log.
+    if(addr==0x8000AF78u){
+      uint32_t _al = cpu->gpr[3], _w0 = 1u, _w20 = 1u;
+      guest_read32(_al, &_w0); guest_read32(_al+20u, &_w20);
+      if(_w0==0u && _w20==0u){
+        { static unsigned _c=0; if(++_c<=4)
+          fprintf(stderr,"[os] AF78-cancel-noop alarm=0x%08X lr=0x%08X (#%u)\n",
+            _al, cpu->lr, _c); }
+        cpu->pc = cpu->lr & ~3u; return true;
+      }
+      { static unsigned _q=0; if(++_q<=4)
+        fprintf(stderr,"[os] AF78-queued alarm=0x%08X w0=0x%08X w20=0x%08X lr=0x%08X (native)\n",
+          _al, _w0, _w20, cpu->lr, _q); }
+      return false; }
     // ARQ HLE (fzEYzb168/169): the second-stage REL posts font ARAM-DMA
     // requests via 205A0-bl, then parks polling [0x803D0198] for
     // completion. On HW __ARQServiceQueueLo (20360) dequeues and
