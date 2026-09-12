@@ -966,6 +966,25 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     if(addr==0x8000AF78u){
       uint32_t _al = cpu->gpr[3], _w0 = 1u, _w20 = 1u;
       guest_read32(_al, &_w0); guest_read32(_al+20u, &_w20);
+      // fzEYzb171: serve AF78 RE-ENTRY as resume, not re-execution. A dispatch
+      // of the AF78 entry with lr already inside AF78's own frame
+      // [AF78..B090] (AF98/AFB0/AFFC/B034/B05C/B068 bl returns) means an outer
+      // AF78 frame is in flight (prologue pushed, AF94-bl set lr=AF98, unlink
+      // not yet done so w0 stays live): re-running the prologue + AF94-bl
+      // re-enters D4F4 instead of resuming at AF98, parking the tail at
+      // pc=D4F4 (probe221). No legitimate caller returns inside AF78 (all 10
+      // native bl sites return outside it; HLE uses 7FFF0000; heap uses
+      // 80xxxxxx), so resume only fires on the pathological re-dispatch.
+      // Resume applies D4F4's architected effect (r3=old EE, EE cleared) and
+      // continues at lr, preserving the outer frame's live registers.
+      if(cpu->lr >= 0x8000AF78u && cpu->lr <= 0x8000B090u){
+        { static unsigned _r=0; if(++_r<=6)
+          fprintf(stderr,"[os] AF78-reentry alarm=0x%08X w0=0x%08X w20=0x%08X lr=0x%08X sp=0x%08X (#%u)\n",
+            _al, _w0, _w20, cpu->lr, cpu->gpr[1], _r); }
+        cpu->gpr[3] = (cpu->msr & 0x8000u) ? 1u : 0u;
+        cpu->msr &= ~0x8000u;
+        cpu->pc = cpu->lr & ~3u; return true;
+      }
       if(_w0==0u && _w20==0u){
         { static unsigned _c=0; if(++_c<=4)
           fprintf(stderr,"[os] AF78-cancel-noop alarm=0x%08X lr=0x%08X (#%u)\n",
