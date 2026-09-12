@@ -977,7 +977,13 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       // 80xxxxxx), so resume only fires on the pathological re-dispatch.
       // Resume applies D4F4's architected effect (r3=old EE, EE cleared) and
       // continues at lr, preserving the outer frame's live registers.
-      if(cpu->lr >= 0x8000AF78u && cpu->lr <= 0x8000B090u){
+      // fzEYzb172: resume gated on lr STRICTLY inside (AF78, B090]. lr==AF78
+      // is excluded: resume sets pc=lr without changing lr, so lr==AF78
+      // re-fires forever (probe222: pc=AF78 lr=AF78 x213, r3=0 re-dispatch).
+      // Native entry from AF78 makes progress (prologue + AF94-bl sets
+      // lr=AF98 -> D4F4 -> AF98, verified in chunk_0002), so fall through to
+      // the cancel-noop/native legs below for lr==AF78.
+      if(cpu->lr > 0x8000AF78u && cpu->lr <= 0x8000B090u){
         { static unsigned _r=0; if(++_r<=6)
           fprintf(stderr,"[os] AF78-reentry alarm=0x%08X w0=0x%08X w20=0x%08X lr=0x%08X sp=0x%08X (#%u)\n",
             _al, _w0, _w20, cpu->lr, cpu->gpr[1], _r); }
