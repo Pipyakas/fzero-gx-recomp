@@ -955,15 +955,43 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _a=0; if(++_a<=8) fprintf(stderr,"[watch] AEDC r3=0x%08X r6=0x%08X r7=0x%08X r30=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->gpr[6], cpu->gpr[7], cpu->gpr[30], cpu->lr, _a);
       return false; }
-    // ARQ HLE (fzEYzb168): the REL at 802161B8-bl-205A0 posts a font
-    // ARAM-DMA request, then parks at 802161D4 polling [0x803D0198] for
+    // ARQ HLE (fzEYzb168/169): the second-stage REL posts font ARAM-DMA
+    // requests via 205A0-bl, then parks polling [0x803D0198] for
     // completion. On HW __ARQServiceQueueLo (20360) dequeues and
-    // ARStartDMA (1E864) copies MRAM->ARAM synchronously inside the DSP
-    // interrupt; the completion callback files the wait word. Our DSP
-    // chassis never raises the ARAM interrupt, so the queue never pumps:
-    // serve it synchronously here (mirrors GXRuntime hle_core.c
-    // dol_hle_ARQPostRequest: r3=request, r5=type, r7=src, r8=dst,
-    // r9=len, r10=callback; dir is always MRAM->ARAM for these posts).
+    // ARStartDMA (1E864) copies synchronously inside the DSP interrupt;
+    // the completion callback files the wait word. Our DSP chassis never
+    // raises the ARAM interrupt, so the queue never pumps: serve
+    // synchronously here (mirrors GXRuntime hle_core.c
+    // dol_hle_ARQPostRequest ABI: request=r3, owner=r4, type=r5, prio=r6,
+    // src=r7, dst=r8, len=r9, callback=r10; type 0 = MRAM->ARAM,
+    // type 1 = ARAM->MRAM per aurora ar.h ARAM_DIR_*).
+    // Post 1 (lr=0x802161B8 class): type==0 MRAM->ARAM font upload, sync
+    // word [0x803D0198] waited-for-1.
+    // Post 2 (lr=0x802165FC, caller disassembled from the live dump:
+    // lis r4,-0x7FDF/addi r10,r4,0x63A8/mr r7,r29/addi r3,r3,0x4A0/
+    // mr r8,r31/mr r9,r28/li r4,1/li r5,1/li r6,1/bl 205A0 (bit-math
+    // verified below), then lis r3,-0x7FC3/addi r3,r3,0x49C/lwz r0,0(r3)/
+    // cmpwi r0,0/bne 80216604 spin): type==1 ARAM->MRAM, src=0x81003668
+    // dst=0x8044A900 (MEM1) len=0x120 cb=0x802163A8. The post-2 wait word
+    // is [0x803D049C], waited-for-0: after the bl returns to 0x802165FC
+    // the caller runs lis r3,0x803D / addi r3,r3,0x49C / lwz r0,0(r3) /
+    // cmpwi r0,0 / bne 80216604. File 0 as the completion state, mirroring
+    // post-1's filing of its waited-for-1 word (filing-then-callback is the
+    // proven pattern: post-1's callback ran fine after its word was filed).
+    // The src is ARAM-side
+    // BY ABI TYPE: a MEM1->MEM1 ARQ DMA is impossible on HW (ARStartDMA
+    // always touches ARAM, and the 2068C/206A0 pump legs swap src/dst by
+    // [req+8] unconditionally), so the direction keys off type, not off
+    // the src numeric range. The ARAM side is bounded by aram.c's
+    // power-of-2 offset mask inside aram_dma_to_ram; the MEM1 dst and len
+    // are bounds-checked here. (The req struct is NOT consulted: this hook
+    // runs before the chunk body files it, so req+16/+20 are still stale.)
+    // bl-target bit math (I-form: tgt = cia + sext(field & 0x03FFFFFC)):
+    // 0x802165F8[4BE09FA9]->0x800205A0, 0x80216614[4BE0A0E9]->0x800206FC
+    // (ARQSetChunkSize, runs natively via coverage dispatch). The stale
+    // 0x802161B4/0x8002029C/0x800206D8/0x800798A8 note is superseded: those
+    // bl words appear nowhere in fze.sample.rel and the live regs show the
+    // second-stage REL (not the sample REL) as the poster.
     // Bounds-checked; anything unexpected runs the native chunk.
     if(addr==0x800205A0u){
       uint32_t req=cpu->gpr[3];
@@ -985,6 +1013,30 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         #undef WR32
         // Run the guest completion callback via the existing trampoline
         // (HW runs it from the ARQ ISR with r3=request).
+        if(cb>=0x80000000u && cb<0x81800000u){
+          dol_hle_note_command_issuer(cpu);
+          dol_hle_queue_guest_callback(cb, req, 0u);
+        }
+        cpu->pc=cpu->lr & ~3u; return true;
+      }
+      if(len && len<0x1000000u && type==1 &&
+         dst>=0x80000000u && len<=cpu->ram_size &&
+         dst+len>=dst && dst+len<=0x80000000u+cpu->ram_size){
+        aram_dma_to_ram(cpu->ram, dst, src, len);
+        { static unsigned _c2=0; if(++_c2<=2) fprintf(stderr,"[arqh] served ARAM->MRAM src=0x%08X dst=0x%08X len=%u cb=0x%08X req=0x%08X\n",src,dst,len,cb,req); }
+        // Same queue-pop/wait-word/callback completion as the type==0 leg:
+        // the pump (20360) and ISR (20464) treat both directions alike
+        // (2068C-leg dir bit only selects the ARStartDMA direction).
+        uint32_t head=0; guest_read32(cpu->gpr[13]-31168u,&head);
+        uint8_t* rm=cpu->ram;
+        #define WR32B(a,v) do{ uint32_t _a=(a); if(_a>=0x80000000u && _a+4<=0x80000000u+cpu->ram_size){ rm[_a-0x80000000u]=(uint8_t)((v)>>24); rm[_a-0x80000000u+1]=(uint8_t)((v)>>16); rm[_a-0x80000000u+2]=(uint8_t)((v)>>8); rm[_a-0x80000000u+3]=(uint8_t)(v); } }while(0)
+        if(head>=0x80000000u){ uint32_t nx=0; guest_read32(head,&nx); WR32B(cpu->gpr[13]-31168u,nx); }
+        WR32B(cpu->gpr[13]-31148u,0u);
+        // Post-2 completion files the spin word to its exit state. On HW
+        // this is done by the ARQ ISR + completion callback; the fzEYzb168
+        // pattern (file-then-callback) is proven by post-1, so do both.
+        WR32B(0x803D049Cu,0u);
+        #undef WR32B
         if(cb>=0x80000000u && cb<0x81800000u){
           dol_hle_note_command_issuer(cpu);
           dol_hle_queue_guest_callback(cb, req, 0u);
