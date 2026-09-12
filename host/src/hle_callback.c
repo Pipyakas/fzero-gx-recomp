@@ -127,6 +127,36 @@ bool dol_hle_queue_guest_callback(u32 address, u32 r3, u32 r4) {
     return true;
 }
 
+// Heap-interp entry: run a heap callback WITHOUT saving slice context.
+// The interp loop calls this when the next pc is a queued heap callback:
+// unlike poll_callback (DOL callbacks run via the slice trampoline with
+// save/restore), the heap callback runs inline in the current register
+// context and returns to the heap pc in lr. Heap callbacks (ARQ font-DMA
+// completion) never touch callee-saved state the interp loop needs.
+bool dol_hle_poll_heap_callback(CPUState* cpu, u32 heap_pc) {
+    if (cpu == NULL || g_callback_active || g_callback_count == 0)
+        return false;
+    // Peek: only consume if the head is a heap address.
+    u32 head = g_callback_queue[g_callback_read].address;
+    if (head < 0x80000000u || head >= 0x81800000u)
+        return false;
+    HlePendingCallback pending = g_callback_queue[g_callback_read];
+    g_callback_read = (g_callback_read + 1u) % HLE_CALLBACK_QUEUE_CAPACITY;
+    g_callback_count--;
+    // No context save, no r30/r31 install, no CR/XER reset: the callback
+    // runs as a plain guest call from the heap wait site.
+    cpu->gpr[3] = pending.r3;
+    cpu->gpr[4] = pending.r4;
+    cpu->pc = pending.address;
+    cpu->lr = heap_pc & ~3u;
+    cpu->exception = 0;
+    cpu->program_exception = 0;
+    { static unsigned _n=0; if(++_n<=8)
+      fprintf(stderr, "[cb] heap callback=0x%08X r3=0x%08X r4=0x%08X ret=0x%08X (#%u)\n",
+            pending.address, pending.r3, pending.r4, cpu->lr, _n); }
+    return true;
+}
+
 bool dol_hle_poll_callback(CPUState* cpu) {
     if (cpu == NULL || g_callback_active || g_callback_count == 0)
         return false;

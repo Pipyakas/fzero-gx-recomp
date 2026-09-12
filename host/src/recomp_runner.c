@@ -955,6 +955,46 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       static unsigned _a=0; if(++_a<=8) fprintf(stderr,"[watch] AEDC r3=0x%08X r6=0x%08X r7=0x%08X r30=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->gpr[6], cpu->gpr[7], cpu->gpr[30], cpu->lr, _a);
       return false; }
+    // ARQ HLE (fzEYzb168): the REL at 802161B8-bl-205A0 posts a font
+    // ARAM-DMA request, then parks at 802161D4 polling [0x803D0198] for
+    // completion. On HW __ARQServiceQueueLo (20360) dequeues and
+    // ARStartDMA (1E864) copies MRAM->ARAM synchronously inside the DSP
+    // interrupt; the completion callback files the wait word. Our DSP
+    // chassis never raises the ARAM interrupt, so the queue never pumps:
+    // serve it synchronously here (mirrors GXRuntime hle_core.c
+    // dol_hle_ARQPostRequest: r3=request, r5=type, r7=src, r8=dst,
+    // r9=len, r10=callback; dir is always MRAM->ARAM for these posts).
+    // Bounds-checked; anything unexpected runs the native chunk.
+    if(addr==0x800205A0u){
+      uint32_t req=cpu->gpr[3];
+      uint32_t type=cpu->gpr[5], src=cpu->gpr[7], dst=cpu->gpr[8],
+               len=cpu->gpr[9], cb=cpu->gpr[10];
+      if(len && len<0x1000000u && src>=0x80000000u &&
+         src+len>=src && src+len<=0x80000000u+cpu->ram_size &&
+         dst<0x1000000u && type==0){
+        aram_dma_to_aram(cpu->ram, src, dst, len);
+        { static unsigned _c=0; if(++_c<=2) fprintf(stderr,"[arqh] served MRAM->ARAM src=0x%08X dst=0x%X len=%u cb=0x%08X req=0x%08X\n",src,dst,len,cb,req); }
+        // Complete the ARQ queue + file the wait word, mirroring what
+        // 20360-pump + ARStartDMA + the callback would have done natively.
+        uint32_t head=0; guest_read32(cpu->gpr[13]-31168u,&head);
+        uint8_t* rm=cpu->ram;
+        #define WR32(a,v) do{ uint32_t _a=(a); if(_a>=0x80000000u && _a+4<=0x80000000u+cpu->ram_size){ rm[_a-0x80000000u]=(uint8_t)((v)>>24); rm[_a-0x80000000u+1]=(uint8_t)((v)>>16); rm[_a-0x80000000u+2]=(uint8_t)((v)>>8); rm[_a-0x80000000u+3]=(uint8_t)(v); } }while(0)
+        if(head>=0x80000000u){ uint32_t nx=0; guest_read32(head,&nx); WR32(cpu->gpr[13]-31168u,nx); }
+        WR32(cpu->gpr[13]-31148u,0u);
+        WR32(0x803D0198u,1u);
+        #undef WR32
+        // Run the guest completion callback via the existing trampoline
+        // (HW runs it from the ARQ ISR with r3=request).
+        if(cb>=0x80000000u && cb<0x81800000u){
+          dol_hle_note_command_issuer(cpu);
+          dol_hle_queue_guest_callback(cb, req, 0u);
+        }
+        cpu->pc=cpu->lr & ~3u; return true;
+      }
+      { static unsigned _q=0; if(++_q<=4)
+        fprintf(stderr,"[arqh] 205A0-UNEXPECTED r3=0x%08X r5=0x%08X r7=0x%08X r8=0x%08X r9=0x%08X r10=0x%08X lr=0x%08X\n",
+          req,type,src,dst,len,cb,cpu->lr); }
+      return false; }
     // host_call runs inside dolrecomp_call BEFORE the chunk — but only for
     // the pc that STARTED the call (fzBN: AD60/AD68 never fire because the
     // chunk runs them natively mid-chain). Same visibility as slice-loop
@@ -3462,6 +3502,13 @@ void recomp_run_slice(void){
                   if(cur == HLE_CALLBACK_RETURN){
                     if(dol_hle_handle_callback_return(&g_cpu, cur)) continue;
                     break; }
+                  // Heap callbacks (ARQ completion): the HLE queues a heap
+                  // pc while the interp loop spins in the heap wait. Run it
+                  // inline WITHOUT slice context save/restore (which would
+                  // clobber the wait-site registers and re-enter the wait).
+                  // The callback returns via blr to the heap wait pc in lr.
+                  { extern bool dol_hle_poll_heap_callback(CPUState* cpu, u32 heap_pc);
+                    if(dol_hle_poll_heap_callback(&g_cpu, cur)) continue; }
                   // Inside the interpreter loop: dispatch DOL-covered pcs
                   // via dolrecomp_call (host_call probes + chunks run);
                   // heap REL pcs miss and single-step below. Coverage
