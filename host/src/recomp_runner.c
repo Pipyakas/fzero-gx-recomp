@@ -3673,6 +3673,24 @@ void recomp_run_slice(void){
           if(g_cpu.lr==0x8000AF98u && s_slice_n > 100 && ++_dr<=8)
           fprintf(stderr,"[dispret] entry=0x%08X ret=0x%08X lr=0x%08X exc=%u down=%lld (#%u)\n",
             pc, g_cpu.pc, g_cpu.lr, g_cpu.exception, (long long)g_cpu.downcount, _dr); }
+        // fzEYzb178: one-shot AF78-park frame dump. Slice-gated dispret proved
+        // the park-time AF78->D4F4->AF98 handoff never dispatches with lr==AF98,
+        // so the parked AF78 frame is frozen mid-frame: dump r1/r30/r31/r3/msr,
+        // downcount, the 8 stacked words [r1+0..+32] (saved lr at [r1+4], saved
+        // r30/r31), alarm words [r30+0]/[r30+20], plus [0x8015CDD8+0]/[+20].
+        // Read-only via guest_read32. Logging only, fires once.
+        { static int _ap=0;
+          if(!_ap && pc==0x8000D4F4u && g_cpu.lr==0x8000AF98u){ _ap=1;
+            uint32_t _r1=g_cpu.gpr[1], _w[8], _a0=0xDEADu, _a20=0xDEADu, _c0=0xDEADu, _c20=0xDEADu;
+            for(int _k=0;_k<8;_k++){ _w[_k]=0xDEADu; guest_read32(_r1+(uint32_t)(_k*4), &_w[_k]); }
+            guest_read32(g_cpu.gpr[30], &_a0); guest_read32(g_cpu.gpr[30]+20u, &_a20);
+            guest_read32(0x8015CDD8u, &_c0); guest_read32(0x8015CDD8u+20u, &_c20);
+            fprintf(stderr,"[af78park] r1=0x%08X r30=0x%08X r31=0x%08X r3=0x%08X msr=0x%08X down=%lld entry=0x%08X ret=0x%08X lr=0x%08X\n",
+              _r1, g_cpu.gpr[30], g_cpu.gpr[31], g_cpu.gpr[3], g_cpu.msr, (long long)g_cpu.downcount, pc, g_cpu.pc, g_cpu.lr);
+            fprintf(stderr,"[af78park] [r1+0]=0x%08X [+4]=0x%08X [+8]=0x%08X [+12]=0x%08X [+16]=0x%08X [+20]=0x%08X [+24]=0x%08X [+28]=0x%08X\n",
+              _w[0], _w[1], _w[2], _w[3], _w[4], _w[5], _w[6], _w[7]);
+            fprintf(stderr,"[af78park] [r30+0]=0x%08X [r30+20]=0x%08X [CDD8+0]=0x%08X [CDD8+20]=0x%08X\n",
+              _a0, _a20, _c0, _c20); } }
         if(++s_slice_n % (16384ull*75ull) == 0) log_backchain(); // ~75 slices
     }
 }
