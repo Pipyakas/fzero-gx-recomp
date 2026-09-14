@@ -158,16 +158,10 @@ bool dol_hle_poll_heap_callback(CPUState* cpu, u32 heap_pc) {
 }
 
 bool dol_hle_poll_callback(CPUState* cpu) {
-    if (cpu == NULL || g_callback_active || g_callback_count == 0) {
-        // fzEYzb180: distinguish stuck-active (queue non-empty but poll
-        // refuses) from empty. First-8 only, logging only.
-        if (cpu != NULL && g_callback_active && g_callback_count > 0) {
-            static unsigned _pr = 0; if (++_pr <= 8)
-              fprintf(stderr, "[cb] poll-refuse active depth=%u head=0x%08X\n",
-                    g_callback_count, g_callback_queue[g_callback_read].address);
-        }
+    // fzEYzb180 (lineage): the poll-refuse probe proved the queue is never
+    // stuck-active at park (0 refusals across probe231). Probe removed.
+    if (cpu == NULL || g_callback_active || g_callback_count == 0)
         return false;
-    }
 
     HlePendingCallback pending = g_callback_queue[g_callback_read];
     g_callback_read = (g_callback_read + 1u) % HLE_CALLBACK_QUEUE_CAPACITY;
@@ -221,11 +215,9 @@ bool dol_hle_poll_nested(CPUState* cpu) {
     cpu->lr = HLE_CALLBACK_RETURN;
     cpu->exception = 0;
     cpu->program_exception = 0;
-    // fzEYzb180: nested path dequeued silently until now (unlike
-    // poll_callback's [cb] dispatch). First-8 only, logging only.
-    { static unsigned _nn = 0; if (++_nn <= 8)
-      fprintf(stderr, "[cb] nested consume addr=0x%08X r3=0x%08X (depth-after=%u)\n",
-            pending.address, pending.r3, g_callback_count); }
+    // fzEYzb180 (lineage): the nested-consume probe proved CMD#5's pair went
+    // nested mid-frame (line 694) while CMD#7's pair never became pending.
+    // Probe removed; dispatch/trampoline counters remain the queue census.
     return true;
 }
 

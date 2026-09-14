@@ -3502,12 +3502,6 @@ void recomp_run_slice(void){
         // dropping every delivered interrupt (4 deliveries, 0 D9CC runs all
         // session). Refresh + re-run the iteration top for the new pc.
         // Terminates: delivery clears MSR[EE], so no immediate re-delivery.
-        // fzEYzb174: GENERALIZE the refresh — ANY chunk return that advances
-        // ctx->pc (D4F4 blr->AF98, callback trampoline restores, vector
-        // resumes) was being discarded the same way: the tail re-dispatched
-        // the stale entry pc, re-running the chunk from its top forever
-        // (probe223: AF78's AF94-bl re-entered D4F4 x213, AF98 never driven).
-        // Refresh unconditionally after the dispatch below instead.
         if(g_cpu.pc != pc){ pc = g_cpu.pc; continue; }
         // HLE async-callback trampoline: if a queued guest callback (e.g.
         // the DI inquiry completion at 0x80018D1C) is pending, run it with
@@ -3664,50 +3658,17 @@ void recomp_run_slice(void){
             }
             break;
         }
-        // fzEYzb177: slice-gated lr==AF98 dispatch-return trace — the fzEYzb176
-        // filter proved the handoff ping-pong works (entry=AF78 ret=D4F4 then
-        // entry=D4F4 ret=AF98, alternating 4/4, exc=0) but all 8 burned at
-        // BOOT (down=+133 to -65323); the park ~16k slices later logged
-        // nothing. Gate the cap on slice count: only count/log once s_slice_n
-        // exceeds 100 (boot AF78 traffic finishes in the first dozens of
-        // slices; the park is steady-state thousands later). First-8 matches
-        // after the threshold, same fields/tag. Logging only.
-        { static unsigned _dr=0;
-          if(g_cpu.lr==0x8000AF98u && s_slice_n > 100 && ++_dr<=8)
-          fprintf(stderr,"[dispret] entry=0x%08X ret=0x%08X lr=0x%08X exc=%u down=%lld (#%u)\n",
-            pc, g_cpu.pc, g_cpu.lr, g_cpu.exception, (long long)g_cpu.downcount, _dr); }
-        // fzEYzb179: one-shot AF78-park frame dump, gated on the TERMINAL CMD#7
-        // park frame (r1==0x801B75F8). fzEYzb178 fired at the BOOT native AF78
-        // (r1=0x801B75B0) instead of the terminal park, so gate on the exact
-        // terminal r1. Dumps r1/r30/r31/r3/msr, downcount, the 8 stacked words
-        // [r1+0..+28] (saved lr at [r1+4]) PLUS [r1+32]/[r1+36]/[r1+40]
-        // (outer return addr at [r1+0x24] = [pre-push sp+4]), alarm words
-        // [r30+0]/[r30+20], plus [0x8015CDD8+0]/[+20]. Read-only via
-        // guest_read32. Logging only, fires once.
-        { static int _ap=0;
-          if(!_ap && pc==0x8000D4F4u && g_cpu.lr==0x8000AF98u && g_cpu.gpr[1]==0x801B75F8u){ _ap=1;
-            uint32_t _r1=g_cpu.gpr[1], _w[8], _a0=0xDEADu, _a20=0xDEADu, _c0=0xDEADu, _c20=0xDEADu;
-            uint32_t _e0=0xDEADu, _e1=0xDEADu, _e2=0xDEADu;
-            for(int _k=0;_k<8;_k++){ _w[_k]=0xDEADu; guest_read32(_r1+(uint32_t)(_k*4), &_w[_k]); }
-            guest_read32(g_cpu.gpr[30], &_a0); guest_read32(g_cpu.gpr[30]+20u, &_a20);
-            guest_read32(0x8015CDD8u, &_c0); guest_read32(0x8015CDD8u+20u, &_c20);
-            guest_read32(_r1+32u, &_e0); guest_read32(_r1+36u, &_e1); guest_read32(_r1+40u, &_e2);
-            fprintf(stderr,"[af78park] r1=0x%08X r30=0x%08X r31=0x%08X r3=0x%08X msr=0x%08X down=%lld entry=0x%08X ret=0x%08X lr=0x%08X\n",
-              _r1, g_cpu.gpr[30], g_cpu.gpr[31], g_cpu.gpr[3], g_cpu.msr, (long long)g_cpu.downcount, pc, g_cpu.pc, g_cpu.lr);
-            fprintf(stderr,"[af78park] [r1+0]=0x%08X [+4]=0x%08X [+8]=0x%08X [+12]=0x%08X [+16]=0x%08X [+20]=0x%08X [+24]=0x%08X [+28]=0x%08X\n",
-              _w[0], _w[1], _w[2], _w[3], _w[4], _w[5], _w[6], _w[7]);
-            fprintf(stderr,"[af78park] [r30+0]=0x%08X [r30+20]=0x%08X [CDD8+0]=0x%08X [CDD8+20]=0x%08X\n",
-              _a0, _a20, _c0, _c20);
-            fprintf(stderr,"[af78park] [r1+32]=0x%08X [r1+36]=0x%08X [r1+40]=0x%08X\n",
-              _e0, _e1, _e2); } }
-        // fzEYzb180: queue-visibility at the park signature (empty vs
-        // stuck-active vs unreachable). First-8 only, read-only getters,
-        // logging only. Placed next to the af78park block, same gate.
-        { static unsigned _cq=0;
-          if(_cq<8 && pc==0x8000D4F4u && g_cpu.lr==0x8000AF98u){ _cq++;
-            fprintf(stderr,"[cbq] depth=%u head=0x%08X active=%d r30=0x%08X EE=%u down=%lld\n",
-              dol_hle_queue_depth(), dol_hle_queue_head(), dol_hle_is_active(),
-              g_cpu.gpr[30], (g_cpu.msr&MSR_EE)?1u:0u, (long long)g_cpu.downcount); } }
+        // fzEYzb174-177 (trace lineage, kept for the record): the AF78<->D4F4
+        // handoff ping-pong was verified working (entry=AF78 ret=D4F4 then
+        // entry=D4F4 ret=AF98, exc=0). The park is NOT a dispatch failure.
+        // (Trace block removed probe233: it answered its question.)
+        // fzEYzb178-180 (trace lineage, kept for the record): the one-shot
+        // [af78park] frame dump (gated on terminal r1==0x801B75F8) proved the
+        // terminal AF78 frame is POST-push with AF94 executed (lr==AF98,
+        // r3=0 D4F4 return), r30==0 (no alarm ptr — the unlink leg), alarm
+        // w0=0x80016324 queued-path, outer-ret [r1+0x24]==AF78 (self-re-entry
+        // shape); [cbq] proved the queue is EMPTY at park (not stuck-active).
+        // (Trace blocks removed probe233: they answered their questions.)
         if(++s_slice_n % (16384ull*75ull) == 0) log_backchain(); // ~75 slices
     }
 }
