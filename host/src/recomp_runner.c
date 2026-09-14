@@ -3661,13 +3661,16 @@ void recomp_run_slice(void){
             }
             break;
         }
-        // fzEYzb176: lr==AF98 dispatch-return trace — catch the park-time
-        // AF78->D4F4->AF98 handoff (pc=D4F4 lr=AF98 state) whenever it
-        // dispatches. Filter on lr at return time, regardless of
-        // entry/return pc, so boot-time D4F4 traffic doesn't burn the cap.
-        // First-8 matches only.
+        // fzEYzb177: slice-gated lr==AF98 dispatch-return trace — the fzEYzb176
+        // filter proved the handoff ping-pong works (entry=AF78 ret=D4F4 then
+        // entry=D4F4 ret=AF98, alternating 4/4, exc=0) but all 8 burned at
+        // BOOT (down=+133 to -65323); the park ~16k slices later logged
+        // nothing. Gate the cap on slice count: only count/log once s_slice_n
+        // exceeds 100 (boot AF78 traffic finishes in the first dozens of
+        // slices; the park is steady-state thousands later). First-8 matches
+        // after the threshold, same fields/tag. Logging only.
         { static unsigned _dr=0;
-          if(g_cpu.lr==0x8000AF98u&&++_dr<=8)
+          if(g_cpu.lr==0x8000AF98u && s_slice_n > 100 && ++_dr<=8)
           fprintf(stderr,"[dispret] entry=0x%08X ret=0x%08X lr=0x%08X exc=%u down=%lld (#%u)\n",
             pc, g_cpu.pc, g_cpu.lr, g_cpu.exception, (long long)g_cpu.downcount, _dr); }
         if(++s_slice_n % (16384ull*75ull) == 0) log_backchain(); // ~75 slices
