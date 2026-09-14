@@ -158,8 +158,16 @@ bool dol_hle_poll_heap_callback(CPUState* cpu, u32 heap_pc) {
 }
 
 bool dol_hle_poll_callback(CPUState* cpu) {
-    if (cpu == NULL || g_callback_active || g_callback_count == 0)
+    if (cpu == NULL || g_callback_active || g_callback_count == 0) {
+        // fzEYzb180: distinguish stuck-active (queue non-empty but poll
+        // refuses) from empty. First-8 only, logging only.
+        if (cpu != NULL && g_callback_active && g_callback_count > 0) {
+            static unsigned _pr = 0; if (++_pr <= 8)
+              fprintf(stderr, "[cb] poll-refuse active depth=%u head=0x%08X\n",
+                    g_callback_count, g_callback_queue[g_callback_read].address);
+        }
         return false;
+    }
 
     HlePendingCallback pending = g_callback_queue[g_callback_read];
     g_callback_read = (g_callback_read + 1u) % HLE_CALLBACK_QUEUE_CAPACITY;
@@ -213,8 +221,20 @@ bool dol_hle_poll_nested(CPUState* cpu) {
     cpu->lr = HLE_CALLBACK_RETURN;
     cpu->exception = 0;
     cpu->program_exception = 0;
+    // fzEYzb180: nested path dequeued silently until now (unlike
+    // poll_callback's [cb] dispatch). First-8 only, logging only.
+    { static unsigned _nn = 0; if (++_nn <= 8)
+      fprintf(stderr, "[cb] nested consume addr=0x%08X r3=0x%08X (depth-after=%u)\n",
+            pending.address, pending.r3, g_callback_count); }
     return true;
 }
+
+// fzEYzb180: read-only queue visibility for the slice-loop park dump.
+unsigned dol_hle_queue_depth(void) { return g_callback_count; }
+u32 dol_hle_queue_head(void) {
+    return g_callback_count ? g_callback_queue[g_callback_read].address : 0u;
+}
+int dol_hle_is_active(void) { return g_callback_active ? 1 : 0; }
 
 bool dol_hle_handle_callback_return(CPUState* cpu, u32 address) {
     if (address == HLE_CALLBACK_RETURN && g_callback_active) {

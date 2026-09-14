@@ -30,6 +30,9 @@ bool dol_hle_poll_callback(CPUState* cpu);
 bool dol_hle_poll_nested(CPUState* cpu);
 bool dol_hle_handle_callback_return(CPUState* cpu, u32 address);
 void dol_hle_init(const void* config);
+unsigned dol_hle_queue_depth(void);
+u32 dol_hle_queue_head(void);
+int dol_hle_is_active(void);
 
 static CPUState g_cpu;
 static int g_inited = 0;
@@ -3697,6 +3700,14 @@ void recomp_run_slice(void){
               _a0, _a20, _c0, _c20);
             fprintf(stderr,"[af78park] [r1+32]=0x%08X [r1+36]=0x%08X [r1+40]=0x%08X\n",
               _e0, _e1, _e2); } }
+        // fzEYzb180: queue-visibility at the park signature (empty vs
+        // stuck-active vs unreachable). First-8 only, read-only getters,
+        // logging only. Placed next to the af78park block, same gate.
+        { static unsigned _cq=0;
+          if(_cq<8 && pc==0x8000D4F4u && g_cpu.lr==0x8000AF98u){ _cq++;
+            fprintf(stderr,"[cbq] depth=%u head=0x%08X active=%d r30=0x%08X EE=%u down=%lld\n",
+              dol_hle_queue_depth(), dol_hle_queue_head(), dol_hle_is_active(),
+              g_cpu.gpr[30], (g_cpu.msr&MSR_EE)?1u:0u, (long long)g_cpu.downcount); } }
         if(++s_slice_n % (16384ull*75ull) == 0) log_backchain(); // ~75 slices
     }
 }
