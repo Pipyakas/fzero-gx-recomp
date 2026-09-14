@@ -437,6 +437,12 @@ static bool guest_read32(uint32_t addr, uint32_t* out); // fwd: def after chassi
 static void queue_di_completion(CPUState* cpu, u32 cb, u32 r3, u32 block){
     { extern void dol_hle_note_command_issuer(CPUState* cpu);
       dol_hle_note_command_issuer(cpu); }
+    // fzEYzb173: bounded queue logging for the CMD#7 handoff (logging only).
+    { static unsigned _q=0; if(++_q<=8){ uint32_t _w0=0xDEADu,_w20=0xDEADu;
+      guest_read32(0x8015CDD8u,&_w0); guest_read32(0x8015CDD8u+20u,&_w20);
+      fprintf(stderr,"[di] queue_cb#%u cb=0x%08X r3=%u blk=0x%08X pc=0x%08X lr=0x%08X EE=%u alarm w0=0x%08X w20=0x%08X\n",
+        _q, cb, r3, block, cpu?cpu->pc:0u, cpu?cpu->lr:0u,
+        (cpu&&(cpu->msr&MSR_EE))?1u:0u, _w0, _w20); } }
     dol_hle_queue_guest_callback(0x8000AF78u, 0x8015CDD8u, 0u);
     dol_hle_queue_guest_callback(cb, r3, block);
 }
@@ -3096,9 +3102,11 @@ void recomp_run_slice(void){
         // fzET: 187CC entry lr split — lr=179F0 (drain, m64=1) vs
         // lr=1973C/others (empty-drain probes). Uncapped by phase.
         { static unsigned _l1=0,_l2=0; unsigned *c= g_cpu.lr==0x800179F0u?&_l1:&_l2; (*c)++;
-          if(*c<=3||*c%5000000==0){ uint32_t a=0; guest_read32(g_cpu.gpr[13]-31464u,&a);
-            fprintf(stderr,"[dvdsm] 187CC-by-lr %s m64=%u r3=0x%08X (#%u)\n",
-              g_cpu.lr==0x800179F0u?"drain":"other", a, g_cpu.gpr[3], *c); } }
+          if(*c<=3||*c%5000000==0){ uint32_t a=0,_cb=0xDEADu,_m64w=0xDEADu;
+            guest_read32(g_cpu.gpr[13]-31464u,&a); guest_read32(g_cpu.gpr[13]-31488u,&_cb);
+            if(_cb) guest_read32(_cb+8u,&_m64w);
+            fprintf(stderr,"[dvdsm] 187CC-by-lr %s m64=%u r3=0x%08X curblk=0x%08X tag8=%u lr=0x%08X (#%u)\n",
+              g_cpu.lr==0x800179F0u?"drain":"other", a, g_cpu.gpr[3], _cb, _m64w, g_cpu.lr, *c); } }
         // 18F38 = result-bit branch; 18E68 = drive-state branch; 1920C = alt path.
         // Uncapped counters + first-few dumps: which callback path executes?
         // fzC6: ALSO watch the 18D1C return chain 18CF0/18D0C/16A38 — these
