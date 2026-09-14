@@ -3661,10 +3661,12 @@ void recomp_run_slice(void){
             }
             break;
         }
-        // fzEYzb174: FIRST-8 dispatch-return trace — entry pc vs pc after a
-        // SUCCESSFUL dolrecomp_call. Answers whether the chunk returns
-        // pc=AF98 (then something later resets it) or pc=D4F4 (hook/chunk).
-        { static unsigned _dr=0; if(++_dr<=8)
+        // fzEYzb175: D4F4/AF98-FILTERED dispatch-return trace — entry pc
+        // vs pc after a SUCCESSFUL dolrecomp_call. Answers whether the chunk
+        // returns pc=AF98 (then something later resets it) or pc=D4F4
+        // (hook/chunk). First-8 matches only.
+        { static unsigned _dr=0;
+          if((pc==0x8000D4F4u||pc==0x8000AF98u||g_cpu.pc==0x8000D4F4u||g_cpu.pc==0x8000AF98u)&&++_dr<=8)
           fprintf(stderr,"[dispret] entry=0x%08X ret=0x%08X lr=0x%08X exc=%u down=%lld (#%u)\n",
             pc, g_cpu.pc, g_cpu.lr, g_cpu.exception, (long long)g_cpu.downcount, _dr); }
         if(++s_slice_n % (16384ull*75ull) == 0) log_backchain(); // ~75 slices
