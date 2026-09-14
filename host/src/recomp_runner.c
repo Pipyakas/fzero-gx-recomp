@@ -3499,6 +3499,12 @@ void recomp_run_slice(void){
         // dropping every delivered interrupt (4 deliveries, 0 D9CC runs all
         // session). Refresh + re-run the iteration top for the new pc.
         // Terminates: delivery clears MSR[EE], so no immediate re-delivery.
+        // fzEYzb174: GENERALIZE the refresh — ANY chunk return that advances
+        // ctx->pc (D4F4 blr->AF98, callback trampoline restores, vector
+        // resumes) was being discarded the same way: the tail re-dispatched
+        // the stale entry pc, re-running the chunk from its top forever
+        // (probe223: AF78's AF94-bl re-entered D4F4 x213, AF98 never driven).
+        // Refresh unconditionally after the dispatch below instead.
         if(g_cpu.pc != pc){ pc = g_cpu.pc; continue; }
         // HLE async-callback trampoline: if a queued guest callback (e.g.
         // the DI inquiry completion at 0x80018D1C) is pending, run it with
@@ -3655,6 +3661,12 @@ void recomp_run_slice(void){
             }
             break;
         }
+        // fzEYzb174: FIRST-8 dispatch-return trace — entry pc vs pc after a
+        // SUCCESSFUL dolrecomp_call. Answers whether the chunk returns
+        // pc=AF98 (then something later resets it) or pc=D4F4 (hook/chunk).
+        { static unsigned _dr=0; if(++_dr<=8)
+          fprintf(stderr,"[dispret] entry=0x%08X ret=0x%08X lr=0x%08X exc=%u down=%lld (#%u)\n",
+            pc, g_cpu.pc, g_cpu.lr, g_cpu.exception, (long long)g_cpu.downcount, _dr); }
         if(++s_slice_n % (16384ull*75ull) == 0) log_backchain(); // ~75 slices
     }
 }
