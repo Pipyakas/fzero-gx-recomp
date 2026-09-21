@@ -158,8 +158,16 @@ bool dol_hle_poll_heap_callback(CPUState* cpu, u32 heap_pc) {
 }
 
 bool dol_hle_poll_callback(CPUState* cpu) {
-    // fzEYzb180 (lineage): the poll-refuse probe proved the queue is never
-    // stuck-active at park (0 refusals across probe231). Probe removed.
+    // fzEYzb182: park-era refuse census (CMD#7 pair queued, zero dispatches
+    // after #5). Log when non-empty queue is refused due to stuck-active.
+    if (cpu != NULL && g_callback_active && g_callback_count > 0) {
+        static unsigned _r = 0;
+        if (++_r <= 6 || _r % 5000000 == 0)
+            fprintf(stderr, "[cbq] poll-refuse active depth=%u head=0x%08X pc=0x%08X lr=0x%08X (#%u)\n",
+                g_callback_count,
+                g_callback_count ? g_callback_queue[g_callback_read].address : 0u,
+                cpu->pc, cpu->lr, _r);
+    }
     if (cpu == NULL || g_callback_active || g_callback_count == 0)
         return false;
 
@@ -209,6 +217,12 @@ bool dol_hle_poll_nested(CPUState* cpu) {
     HlePendingCallback pending = g_callback_queue[g_callback_read];
     g_callback_read = (g_callback_read + 1u) % HLE_CALLBACK_QUEUE_CAPACITY;
     g_callback_count--;
+    // fzEYzb184: nested-consume census (pair #5/#7 vanish without outer
+    // dispatch; park1 shows queue EMPTY at park with no stuck-active).
+    { static unsigned _n = 0;
+      if (++_n <= 10)
+          fprintf(stderr, "[cbq] nested-consume cb=0x%08X r3=0x%08X depth-left=%u pc=0x%08X lr=0x%08X (#%u)\n",
+              pending.address, pending.r3, g_callback_count, cpu->pc, cpu->lr, _n); }
     cpu->gpr[3] = pending.r3;
     cpu->gpr[4] = pending.r4;
     cpu->pc = pending.address;

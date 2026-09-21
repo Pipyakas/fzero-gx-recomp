@@ -3576,6 +3576,36 @@ void recomp_run_slice(void){
           if(!_f){ if(_nseen<2048) _seen[_nseen++]=pc;
             if((_nseen%16)==1){
               fprintf(stderr,"[new] pc=0x%08X lr=0x%08X (uniq=%d)\n", pc, g_cpu.lr, _nseen); } } }
+        // fzEYzb185 (answered run_probe237/238: D4F4 executes normally early
+        // boot — 8/8 ret=1, pc advances via blr, down -5. D4F4-as-entry is
+        // rare; park-time pc=D4F4 is a post-return state, not a stuck
+        // dispatch. The real cycle is mapped by the frame census below.)
+        // fzEYzb186 TEMP: AF78-frame dispatch census. Log every slice
+        // dispatch whose pc is in the AF78 frame [AF78..B090] or is a frame
+        // bl-target (D4F4/D51C/AC44/1142C/11490/9FEC) with per-pc counters
+        // + first-2 reg dumps. Maps the actual cycle the loop is stuck in.
+        { static unsigned _cAF78=0,_cD4F4=0,_cAF98=0,_cAFA8=0,_cAFB0=0,_cD51C=0,
+            _cB068=0,_cB078=0,_cAC44=0,_c1142C=0,_c9FEC=0,_cAF5C=0,_cAF64=0,_cOTH=0;
+          unsigned *_cc = NULL; const char *_cn = "?";
+          if(pc==0x8000AF78u){_cc=&_cAF78;_cn="AF78-entry";}
+          else if(pc==0x8000D4F4u){_cc=&_cD4F4;_cn="D4F4";}
+          else if(pc==0x8000AF98u){_cc=&_cAF98;_cn="AF98";}
+          else if(pc==0x8000AFA8u){_cc=&_cAFA8;_cn="AFA8";}
+          else if(pc==0x8000AFB0u){_cc=&_cAFB0;_cn="AFB0";}
+          else if(pc==0x8000D51Cu){_cc=&_cD51C;_cn="D51C";}
+          else if(pc==0x8000B068u){_cc=&_cB068;_cn="B068";}
+          else if(pc==0x8000B078u){_cc=&_cB078;_cn="B078";}
+          else if(pc==0x8000AC44u){_cc=&_cAC44;_cn="AC44";}
+          else if(pc==0x8001142Cu){_cc=&_c1142C;_cn="1142C";}
+          else if(pc==0x80009FECu){_cc=&_c9FEC;_cn="9FEC";}
+          else if(pc==0x8000AF5Cu){_cc=&_cAF5C;_cn="AF5C";}
+          else if(pc==0x8000AF64u){_cc=&_cAF64;_cn="AF64";}
+          else if(pc>=0x8000AF78u&&pc<=0x8000B090u){_cc=&_cOTH;_cn="AF78-FRAME-OTHER";}
+          if(_cc){ (*_cc)++;
+            if(*_cc<=2) fprintf(stderr,"[frm] %s r3=0x%08X r30=0x%08X lr=0x%08X msr=0x%08X exc=0x%X (#%u)\n",
+              _cn, g_cpu.gpr[3], g_cpu.gpr[30], g_cpu.lr, g_cpu.msr, g_cpu.exception, *_cc);
+            if(*_cc%5000000==0) fprintf(stderr,"[frm] census AF78=%u D4F4=%u AF98=%u AFA8=%u AFB0=%u D51C=%u B068=%u B078=%u AC44=%u 1142C=%u 9FEC=%u AF5C=%u AF64=%u OTHER=%u\n",
+              _cAF78,_cD4F4,_cAF98,_cAFA8,_cAFB0,_cD51C,_cB068,_cB078,_cAC44,_c1142C,_c9FEC,_cAF5C,_cAF64,_cOTH); } }
         if(!dolrecomp_call(&g_cpu, pc)){
             // fzEYzb156 (PLAN M2): static recomp only covers DOL addresses.
             // Runtime-loaded REL code in the heap (0x8155A4BC = fze.sample.rel
@@ -3669,6 +3699,24 @@ void recomp_run_slice(void){
         // w0=0x80016324 queued-path, outer-ret [r1+0x24]==AF78 (self-re-entry
         // shape); [cbq] proved the queue is EMPTY at park (not stuck-active).
         // (Trace blocks removed probe233: they answered their questions.)
+        // fzEYzb183: one-shot park-state dump. CMD#7's pair queues but no
+        // 6th dispatch ever prints; bt pins pc=D4F4 lr=AF98. Settles whether
+        // the queue still holds the pair (poll path broken) or drained
+        // (nested consume), and whether a silent identical exception loops.
+        if(g_cpu.pc == 0x8000D4F4u && g_cpu.lr == 0x8000AF98u){
+            static unsigned _pk = 0;
+            if(++_pk == 2000000 || _pk == 20000000){
+                uint32_t _r30 = g_cpu.gpr[30], _w0 = 0xDEADu, _w20 = 0xDEADu,
+                         _m0 = 0xDEADu, _m20 = 0xDEADu;
+                guest_read32(_r30, &_m0); guest_read32(_r30 + 20u, &_m20);
+                guest_read32(0x8015CDD8u, &_w0); guest_read32(0x8015CDD8u + 20u, &_w20);
+                fprintf(stderr, "[park1] pc=D4F4 lr=AF98 r1=0x%08X msr=0x%08X exc=0x%X down=%lld qdepth=%u qhead=0x%08X active=%d r30=0x%08X [r30]=0x%08X [r30+20]=0x%08X alarmW0=0x%08X alarmW20=0x%08X tb=0x%llX (#%u)\n",
+                    g_cpu.gpr[1], g_cpu.msr, g_cpu.exception, (long long)g_cpu.downcount,
+                    dol_hle_queue_depth(), dol_hle_queue_head(), dol_hle_is_active(),
+                    _r30, _m0, _m20, _w0, _w20,
+                    (unsigned long long)g_cpu.timebase, _pk);
+            }
+        }
         if(++s_slice_n % (16384ull*75ull) == 0) log_backchain(); // ~75 slices
     }
 }
