@@ -987,17 +987,62 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
       // Resume applies D4F4's architected effect (r3=old EE, EE cleared) and
       // continues at lr, preserving the outer frame's live registers.
       // fzEYzb172: resume gated on lr STRICTLY inside (AF78, B090]. lr==AF78
-      // is excluded: resume sets pc=lr without changing lr, so lr==AF78
-      // re-fires forever (probe222: pc=AF78 lr=AF78 x213, r3=0 re-dispatch).
-      // Native entry from AF78 makes progress (prologue + AF94-bl sets
-      // lr=AF98 -> D4F4 -> AF98, verified in chunk_0002), so fall through to
-      // the cancel-noop/native legs below for lr==AF78.
+      // is excluded from the reentry-resume leg: resume sets pc=lr without
+      // changing lr, so lr==AF78 re-fires forever (probe222).
+      // fzEYzb187 (probe239 [frm] census): lr==AF78 + r3==0 was NOT a one-off
+      // — it is the steady-state park cycle. Native entry with lr==AF78 saves
+      // that lr on the frame, runs D4F4/AF98/D51C/AFB0/B078, and blr returns
+      // to AF78 with lr still AF78: ~50M loops of
+      //   AF78(r3=0,lr=AF78) -> D4F4 -> AF98(r30=0) -> AFA8(in-chunk) ->
+      //   D51C -> AFB0 -> B078 -> blr -> AF78...
+      // while alarmW0@CDD8 stays 0x80016324 (real DVD timeout never unlinked)
+      // and DIpend=1 with EE=0. r3==0 means guest_read32(0) fails, w0/w20
+      // stay at their 1u init, so the cancel-noop leg never fires either.
+      // Break the self-return: null-alarm cancel is a no-op that must not
+      // re-enter AF78 (fzEYzb187). Never jump a backchain hit that is an
+      // epilogue entry (16598 -> 167A4 is a 64-byte lmw/addi epilogue): that
+      // smashes the wrong frame and parks at pc=lr=0x8032A010 (probe240).
+      // fzEYzb188 (probe241): hardcoded 16088 is wrong for this entry —
+      // r3==0 means the caller is not 16084 (that site does addi r3,r30,104),
+      // so r27/r31 are not the DVD DI bits 16088 ORs into 0xCC006000; the
+      // mid-function run corrupts DI (or its epilogue loads lr=0) and the
+      // machine dies at pc=lr=0, msr=0x100A. Unwind AF78's caller instead:
+      // at AF78 entry r1 is that caller's frame, [r1+4] is its return
+      // address, [r1] the outer fp. Prefer the HLE callback unwind (7FFF0000)
+      // when a trampoline is live.
+      if((cpu->lr & ~3u) == 0x8000AF78u && (_al < 0x80000000u || _al == 0u)){
+        u32 esc, a = cpu->gpr[1], grand = 0, cret = 0;
+        bool outer = false;
+        if(dol_hle_is_active()){
+          esc = 0x7FFF0000u;
+        } else {
+          outer = guest_read32(a, &grand) && grand > a && grand < 0x81800000u &&
+                  guest_read32(a + 4u, &cret) && cret >= 0x80004000u && cret < 0x80400000u &&
+                  (cret & 3u) == 0 && cret != 0x8000AF78u && cret != 0x80016598u &&
+                  !(cret >= 0x8000AF78u && cret <= 0x8000B090u);
+          if(outer){ esc = cret; cpu->gpr[1] = grand; }
+          else esc = 0x80003154u;
+        }
+        { static unsigned _e=0; if(++_e<=6)
+          fprintf(stderr,"[os] AF78-self-lr null-alarm unwind -> 0x%08X r1=0x%08X sp4=0x%08X grand=0x%08X r3=0x%08X outer=%d cb=%d (#%u)\n",
+            esc, cpu->gpr[1], cret, grand, _al, outer, dol_hle_is_active(), _e); }
+        cpu->lr = esc;
+        cpu->pc = esc & ~3u; return true;
+      }
       if(cpu->lr > 0x8000AF78u && cpu->lr <= 0x8000B090u){
         { static unsigned _r=0; if(++_r<=6)
           fprintf(stderr,"[os] AF78-reentry alarm=0x%08X w0=0x%08X w20=0x%08X lr=0x%08X sp=0x%08X (#%u)\n",
             _al, _w0, _w20, cpu->lr, cpu->gpr[1], _r); }
         cpu->gpr[3] = (cpu->msr & 0x8000u) ? 1u : 0u;
         cpu->msr &= ~0x8000u;
+        cpu->pc = cpu->lr & ~3u; return true;
+      }
+      // fzEYzb187: null/non-RAM alarm pointer — OSCancelAlarm(NULL) is a
+      // no-op; do not run native (native would OSDisableInterrupts and, with
+      // lr outside the frame, still return cleanly — but skip the work).
+      if(_al < 0x80000000u){
+        { static unsigned _n=0; if(++_n<=6)
+          fprintf(stderr,"[os] AF78-null-alarm lr=0x%08X (#%u)\n", cpu->lr, _n); }
         cpu->pc = cpu->lr & ~3u; return true;
       }
       if(_w0==0u && _w20==0u){
