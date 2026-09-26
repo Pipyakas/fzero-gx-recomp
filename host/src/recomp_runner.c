@@ -47,12 +47,11 @@ static u64 g_tb = 0;
 // the 179DC clear leg executes), [6]=-30422 gate2 done-flag byte's word
 // (fzEYzb85: 706EC stb r0=1 files it AFTER 1B42C returns; the game path's
 // 706E4->1B42C is what must start returning nonzero for the boot to
-// advance past the DVD-wait stage), [7]=-30632 waiter-2 flag byte's word
-// (fzEYzb113: 341A4 stb r0=0 clears pre-park, 34148 stb r31 pre-worker,
-// 344B8 stb r3 files post-display; the 34488 probe can never observe the
-// native 344B8 store, so the journal is the ONLY witness of the write).
+// advance past the DVD-wait stage), [7]=-31324 filer selector
+// (fzEYzb61b: 1A718/1AD18 are native stw labels — dispatch probes never
+// see them; only the journal can prove whether anything arms 1C01C).
 static u32 s_watch_off[8] = {0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu};
-static const char* s_watch_nm[8] = {"gate2word", "waitword31388", "curblk31488", "fnptr31372", "m52drv", "m56drv", "doneflag30422", "wait2flag30632"};
+static const char* s_watch_nm[8] = {"gate2word", "waitword31388", "curblk31488", "fnptr31372", "m52drv", "m56drv", "doneflag30422", "sel31324"};
 static unsigned s_watch_tot[8] = {0,0,0,0,0,0,0,0};
 static unsigned s_watch_nz[8] = {0,0,0,0,0,0,0,0};
 static void watch_journal(u32 offset, u32 size, void* user){
@@ -69,9 +68,9 @@ static void watch_journal(u32 offset, u32 size, void* user){
     // no post-write 1 has ever been observed in the waitword.
     // Fully-covered 4B stores report the word as-is. Anything else
     // reports the covered bytes + a '%' suffix meaning "rest is image".
-    // fzEYzb113: slot7 (wait2 flag) logs EVERY write uncapped — the byte
-    // flips at most a few times per boot, and each flip is the verdict on
-    // whether the 34488 native chain ran.
+    // fzEYzb113: slot7 (was wait2 flag; now filer selector -31324)
+    // logs EVERY write uncapped — each flip is the verdict on whether
+    // the 1A700/AD18 native store chain ran.
     for(int i=0;i<8;i++)
         if(s_watch_off[i]!=0xFFFFFFFFu && offset < s_watch_off[i]+4u && s_watch_off[i] < offset+size){
             uint32_t a = GC_RAM_BASE + s_watch_off[i], v = 0xDEADu;
@@ -102,9 +101,18 @@ static void watch_journal(u32 offset, u32 size, void* user){
             // reads it (waitword=0 at every 1A55C entry, both before and
             // after entries that provably ran the 1A618 side).
             if(s_watch_tot[i]<=8 || s_watch_tot[i]%50000==0 ||
-               (_is_nz && (s_watch_nz[i]<64 || _uncap))){
+               (_is_nz && (s_watch_nz[i]<64 || _uncap)) || i==7){
                 if(_is_nz) s_watch_nz[i]++;
-                fprintf(stderr,"[watchmem] %s write off=0x%X sz=%u now=0x%08X%s pc=0x%08X lr=0x%08X (tot=%u)\n",
+                // fzEYzb61e: for slot7 also dump the store-source GPRs —
+                // journal is PRE-write so "now=" is the old image; r3/r4
+                // at journal time are the values ABOUT to be stored (the
+                // native stretch already loaded them).
+                if(i==7)
+                  fprintf(stderr,"[watchmem] %s write off=0x%X sz=%u now=0x%08X%s pc=0x%08X lr=0x%08X r3=0x%08X r4=0x%08X r31=0x%08X (tot=%u)\n",
+                    s_watch_nm[i], offset, size, v, exact?"":"%",
+                    g_cpu.pc, g_cpu.lr, g_cpu.gpr[3], g_cpu.gpr[4], g_cpu.gpr[31], s_watch_tot[i]);
+                else
+                  fprintf(stderr,"[watchmem] %s write off=0x%X sz=%u now=0x%08X%s pc=0x%08X lr=0x%08X (tot=%u)\n",
                     s_watch_nm[i], offset, size, v, exact?"":"%",
                     g_cpu.pc, g_cpu.lr, s_watch_tot[i]); }
         }
@@ -417,6 +425,7 @@ static bool chassis_di_write(void* user, CPUState* cpu, u32 ea, u8 size, u64 val
     return true;
 }
 static bool guest_read32(uint32_t addr, uint32_t* out); // fwd: def after chassis_init (needs g_cpu)
+static bool guest_write32(uint32_t addr, uint32_t val); // fwd: pair of guest_read32
 // DI command executor: serve DVD reads from the opened disc image.
 // Register map (dolsdk2001 dvdlow.c: __DIRegs[2..7] == DI COMMAND_0..DMA_LEN
 // + CONTROL): a DVDLowRead programs c0=0xA8000000, c1=(offset>>2),
@@ -440,6 +449,23 @@ static bool guest_read32(uint32_t addr, uint32_t* out); // fwd: def after chassi
 static void queue_di_completion(CPUState* cpu, u32 cb, u32 r3, u32 block){
     { extern void dol_hle_note_command_issuer(CPUState* cpu);
       dol_hle_note_command_issuer(cpu); }
+    // fzEYzb206: DVDLow* stores the completion cb at [r13-31584]
+    // (__DVDLowCallback, 16A58 stw r4). The HLE trampoline already has `cb`
+    // and will deliver it; leaving the global set lets the native
+    // __DVDInterruptHandler (15FC0) re-invoke the same cb on the hardware
+    // TCINT path with garbage regs (probe249: 2nd 18D1C r4=0x80000000
+    // blk=0x80000000 cur=0). Clear it here so 15FC0 sees a null slot.
+    if(cpu){
+        uint32_t slot = cpu->gpr[13] - 31584u;
+        uint32_t prev = 0;
+        guest_read32(slot, &prev);
+        if(prev){
+            guest_write32(slot, 0);
+            { static unsigned _c=0; if(++_c<=4)
+                fprintf(stderr,"[di] clear-DVDLowCallback [0x%08X] was=0x%08X cb=0x%08X r3=%u (#%u)\n",
+                        slot, prev, cb, r3, _c); }
+        }
+    }
     // fzEYzb173: bounded queue logging for the CMD#7 handoff (logging only).
     { static unsigned _q=0; if(++_q<=8){ uint32_t _w0=0xDEADu,_w20=0xDEADu;
       guest_read32(0x8015CDD8u,&_w0); guest_read32(0x8015CDD8u+20u,&_w20);
@@ -515,6 +541,9 @@ static DolDiCommandResult chassis_di_execute(void* user, DolDiCommand* cmd){
           // (A374 slot check is moot: body invokes slot itself via blrl.)
           // fzEE: block fully untouched (no +12/+28/+32 writes; the 19270
           // success gate needs [blk+32]==[blk+20] and any HLE write breaks it)
+          // fzEYzb206: clear the native slot AFTER the cb is already queued
+          // above; queue_di_completion does the clear so all DI commands
+          // (INQUIRY/STOPMOTOR/READ) share the path.
             { static int _m=0; if(_m<2){ _m++; fprintf(stderr,"[di] INQUIRY blk=0x%08X cb=0x80018D1C (block untouched, fzEE)\n", block); } }
           // fzEYzb38 (answered — r3=0 tested live, identical: 1000/1000
           // inq/stop, read=0, 7 completions, loop unchanged). r3 is
@@ -707,6 +736,40 @@ static void chassis_init(void){
     dol_hle_init(NULL);
     dol_mmio_bus_init(&s_mmio_bus);
     dol_interrupts_init(&s_interrupts);
+    // fzEYzb203: VI power-on preset (Dolphin VideoInterface.cpp Preset NTSC).
+    // interrupts.c zero-inits vi_regs; guest VIWaitForRetrace / 1A8B4 reset
+    // may poll ENB/FMT/half-line timing before any write. Safe defaults:
+    // VTIMING EQU=6, DCR ENB=1 FMT=NTSC, HTR0 HLW=429 HCE=105 HCS=71,
+    // HTR1 HSY=64 HBE=162 HBS=373, VBLANK odd PRB=502 PSB=5 even 503/4,
+    // burst blanking, INT0 HCT=430 VCT=263 MASK=1 INT=0, INT1 HCT=1 VCT=1
+    // MASK=1, PICCONF STD=40 WPL=40, CLOCK NTSC.
+    {
+        DolInterrupts* vi = &s_interrupts;
+        #define VI16(o,v) do{ vi->vi_regs[(o)]=(u8)((v)>>8); vi->vi_regs[(o)+1]=(u8)(v); }while(0)
+        #define VI32(o,v) do{ vi->vi_regs[(o)]=(u8)((v)>>24); vi->vi_regs[(o)+1]=(u8)((v)>>16); vi->vi_regs[(o)+2]=(u8)((v)>>8); vi->vi_regs[(o)+3]=(u8)(v); }while(0)
+        VI16(0x00, 0x0006);          // VTIMING EQU=6
+        VI16(0x02, 0x0001);          // DCR ENB=1 FMT=NTSC NIN=0
+        // HTR0 bitfield: HLW:10 | rsv:6 | HCE:7 | rsv:1 | HCS:7 | rsv:1
+        // Dolphin UVIHorizontalTiming0: Hex = HLW | (HCE<<16) | (HCS<<24)
+        VI32(0x04, 429u | (105u<<16) | (71u<<24));
+        // HTR1: HSY:7 | HBE640:10 @bit7 | HBS640:10 @bit17 | rsv:5
+        VI32(0x08, 64u | (162u<<7) | (373u<<17));
+        // VBLANK odd/even: PRB:10 | rsv:6 | PSB:10 → Hex = PRB | (PSB<<16)
+        VI32(0x0C, 502u | (5u<<16));
+        VI32(0x10, 503u | (4u<<16));
+        // BURST blanking packs BS0/BE0/BS2/BE2 — leave 0 (guest programs).
+        // XFB top/bottom already 0 from memset.
+        // INT0: HCT:11 :5 VCT:11 :1 MASK:1 :2 INT:1 → Hex=HCT|(VCT<<16)|(MASK<<28)
+        VI32(0x30, 430u | (263u<<16) | (1u<<28));
+        VI32(0x34, 1u | (1u<<16) | (1u<<28));
+        VI32(0x38, 0u);
+        VI32(0x3C, 0u);
+        // PICCONF STD:8 WPL:7 → Hex=STD|(WPL<<8)
+        VI16(0x70, 40u | (40u<<8));
+        VI16(0x6C, 0x0001); // CLOCK NTSC (54MHz)
+        #undef VI16
+        #undef VI32
+    }
     dol_vi_clock_init(&s_vi_clock);
     // fzB7: work_units_per_retrace was 1 with advance(1) per dispatch =>
     // EVERY block = a full 675000-tick retrace; timebase raced ~1e5x too
@@ -808,6 +871,13 @@ static bool guest_read32(uint32_t addr, uint32_t* out){
     *out = ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
     return true;
 }
+static bool guest_write32(uint32_t addr, uint32_t val){
+    if(addr < GC_RAM_BASE || addr + 4u > GC_RAM_BASE + g_cpu.ram_size || addr + 4u < addr) return false;
+    uint8_t* p = g_cpu.ram + (addr - GC_RAM_BASE);
+    p[0]=(uint8_t)(val>>24); p[1]=(uint8_t)(val>>16);
+    p[2]=(uint8_t)(val>>8);  p[3]=(uint8_t)val;
+    return true;
+}
 static uint32_t chassis_ctx_ptr(void){
     uint32_t a = GUEST_OS_CONTEXT_PTR_ADDR;
     if(a < GC_RAM_BASE || a + 4 > GC_RAM_BASE + g_cpu.ram_size) return 0;
@@ -852,7 +922,7 @@ static void chassis_deliver_external(void){
     g_cpu.srr0=pc; g_cpu.srr1=msr; g_cpu.msr &= ~MSR_EE;
     g_cpu.pc=s_os_dispatch_interrupt; g_cpu.exception=0;
     s_ext_deliveries++;
-    if(s_ext_deliveries<=4) fprintf(stderr,"[irq] external->dispatch 0x%08X ctx=0x%08X (delivery %llu)\n", s_os_dispatch_interrupt, ctx, (unsigned long long)s_ext_deliveries);
+    if(s_ext_deliveries<=16) fprintf(stderr,"[irq] external->dispatch 0x%08X ctx=0x%08X (delivery %llu)\n", s_os_dispatch_interrupt, ctx, (unsigned long long)s_ext_deliveries);
 }
 
 static uint64_t hle_external_read(CPUState* cpu, uint32_t addr, uint8_t size){
@@ -1680,11 +1750,14 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[5]=a-GC_RAM_BASE; }
         { uint32_t a=(cpu->gpr[13]-30422u)&~3u;
           if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[6]=a-GC_RAM_BASE; }
-        { uint32_t a=(cpu->gpr[13]-30632u)&~3u;
+        // fzEYzb61b: slot7 = filer selector [-31324]. 1A718/1AD18 are
+        // native stw labels — dispatch probes never see them; only the
+        // journal can prove whether anything arms the cascade.
+        { uint32_t a=(cpu->gpr[13]-31324u)&~3u;
           if(a>=GC_RAM_BASE && a+4<=GC_RAM_BASE+g_cpu.ram_size) s_watch_off[7]=a-GC_RAM_BASE; }
         { extern void ppc_set_mem_write_journal(void (*fn)(u32,u32,void*), void* user);
           ppc_set_mem_write_journal(watch_journal, NULL); }
-        fprintf(stderr,"[watchmem] armed gate2off=0x%X waitoff=0x%X curblkoff=0x%X fnptroff=0x%X m52off=0x%X m56off=0x%X doneoff=0x%X wait2off=0x%X (r13=0x%08X)\n",
+        fprintf(stderr,"[watchmem] armed gate2off=0x%X waitoff=0x%X curblkoff=0x%X fnptroff=0x%X m52off=0x%X m56off=0x%X doneoff=0x%X seloff=0x%X (r13=0x%08X)\n",
           s_watch_off[0], s_watch_off[1], s_watch_off[2], s_watch_off[3], s_watch_off[4], s_watch_off[5], s_watch_off[6], s_watch_off[7], cpu->gpr[13]);
       }
       return false; }
@@ -1822,17 +1895,31 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // 70068/700B4 (dispatched entries) = the GX chain the game path runs
     // after the park (70068 via 6FD5C bl, 700B4 via 6FD58 bl).
     if(addr==0x800320F0u){
-      static unsigned _p=0; if(++_p<=6){ uint32_t vi=0xDEADu,gx=0xDEADu;
+      static unsigned _p=0; if(++_p<=6){ uint32_t vi=0xDEADu,gx=0xDEADu,at=0xDEADu,cc=0xDEADu;
         guest_read32(cpu->gpr[13]-30708u,&vi); guest_read32(cpu->gpr[2]-32232u,&gx);
-        fprintf(stderr,"[wait3] 320F0-park VIptr=0x%08X gxbase=0x%08X lr=0x%08X (#%u)\n",
-          vi, gx, cpu->lr, _p); }
+        guest_read32(0x800000CCu,&cc);
+        // raw lhz of the VI halfword + the 4 extracted bit outputs (r3..r6)
+        u64 word=0; if(vi>=GC_RAM_BASE) dol_mmio_bus_read(&s_mmio_bus, cpu, vi, 2, &word);
+        guest_read32((cpu->gpr[2]-32232u)+12u,&at);
+        fprintf(stderr,"[wait3] 320F0-park VIptr=0x%08X gxbase=0x%08X word=%04X [+12]=0x%08X [CC]=0x%08X r3=%u r4=%u r5=%u r6=%u lr=0x%08X (#%u)\n",
+          vi, gx, (unsigned)(word&0xFFFFu), at, cc, cpu->gpr[3]&1u, cpu->gpr[4]&1u, cpu->gpr[5]&1u, cpu->gpr[6]&1u, cpu->lr, _p); }
       return false; }
     if(addr==0x80070068u||addr==0x800700B4u){
       static unsigned _g1=0,_g2=0;
       unsigned *c=addr==0x80070068u?&_g1:&_g2; (*c)++;
-      if(*c<=4) fprintf(stderr,"[wait3] %s r3=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
-        addr==0x80070068u?"70068":"700B4",
-        cpu->gpr[3], cpu->gpr[4], cpu->lr, *c);
+      if(*c<=4){ uint32_t cc=0xDEADu,at=0xDEADu;
+        guest_read32(0x800000CCu,&cc);
+        guest_read32(0x80177BC0u,&at);
+        fprintf(stderr,"[wait3] %s r3=0x%08X r4=0x%08X [CC]=0x%08X [gx+12]=0x%08X lr=0x%08X (#%u)\n",
+          addr==0x80070068u?"70068":"700B4",
+          cpu->gpr[3], cpu->gpr[4], cc, at, cpu->lr, *c); }
+      return false; }
+    // fzEYzb204 probe248: 32140 — the post-320F0 compare (r3 vs [-30672]).
+    if(addr==0x80032140u){
+      static unsigned _n4=0; if(++_n4<=6){ uint32_t g=0xDEADu;
+        guest_read32(cpu->gpr[13]-30672u,&g);
+        fprintf(stderr,"[wait3] 32140 r3=0x%08X [-30672]=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], g, cpu->lr, _n4); }
       return false; }
     // fzEYzb120: 6FEA0 is a NATIVE goto-target (from 6FE3C-taken, no
     // downcount, HAS switch case — reachable only as native goto landing,
@@ -1860,12 +1947,94 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
           fl, cpu->lr, _d); }
       return false; }
     if(addr==0x8006FD34u){
-      static unsigned _t=0; if(++_t<=4)
-        fprintf(stderr,"[wait3] 6FD34-bitest r0=%u r3=0x%08X lr=0x%08X (#%u)\n",
-          cpu->gpr[0], cpu->gpr[3], cpu->lr, _t);
+      static unsigned _t=0; if(++_t<=6){ uint32_t word=0xDEADu;
+        guest_read32(cpu->gpr[13]-30432u,&word);
+        fprintf(stderr,"[wait3] 6FD34-bitest [-30432]=0x%08X bit2=%u r3=0x%08X lr=0x%08X (#%u)\n",
+          word, (word>>2)&1u, cpu->gpr[3], cpu->lr, _t); }
+      return false; }
+    if(addr==0x800700D8u){
+      static unsigned _pd=0; if(++_pd<=8){ uint32_t vi=0xDEADu,gxw=0xDEADu;
+        guest_read32(cpu->gpr[13]-30708u,&vi); guest_read32(cpu->gpr[2]-32232u,&gxw);
+        uint8_t b10=0; if(cpu->gpr[1]+10u>=GC_RAM_BASE) b10=g_cpu.ram[cpu->gpr[1]+10u-GC_RAM_BASE];
+        fprintf(stderr,"[wait3] 700D8-lbz [sp+10]=%u VIptr=0x%08X gxbase=0x%08X r3=0x%08X r5=0x%08X lr=0x%08X (#%u)\n",
+          b10, vi, gxw, cpu->gpr[3], cpu->gpr[5], cpu->lr, _pd); }
+      return false; }
+    // fzEYzb61c: POST-store read of the filer selector. 1A728 is the first
+    // downcount label after the native 1A700..1A718 stretch (stw r3,-31324).
+    // Journal only sees the PRE-image (now=0 always) — this dumps the
+    // value that actually landed, plus r31/[r31+280] (the store source).
+    if(addr==0x8001A728u){
+      static unsigned _s7=0; if(++_s7<=8){ uint32_t sel=0xDEADu,src=0xDEADu;
+        guest_read32(cpu->gpr[13]-31324u,&sel);
+        guest_read32(cpu->gpr[31]+280u,&src);
+        fprintf(stderr,"[sel31324] 1A728-post [-31324]=%u r3=%u r4=%u r31=0x%08X [r31+280]=0x%08X lr=0x%08X (#%u)\n",
+          sel, cpu->gpr[3], cpu->gpr[4], cpu->gpr[31], src, cpu->lr, _s7); }
+      return false; }
+    // fzEYzb61d: same for the AD18 side — 1AD24 (or next downcount after
+    // ACF0..AD18 native stretch). If ACF0 dispatches, r4 becomes r30+324
+    // (a pointer) before AD18 stores it.
+    if(addr==0x8001AD00u||addr==0x8001AD24u){
+      static unsigned _s8=0,_s9=0;
+      unsigned *c=addr==0x8001AD00u?&_s8:&_s9; (*c)++;
+      if(*c<=6){ uint32_t sel=0xDEADu;
+        guest_read32(cpu->gpr[13]-31324u,&sel);
+        fprintf(stderr,"[sel31324] %s [-31324]=%u r3=0x%08X r4=0x%08X r30=0x%08X lr=0x%08X (#%u)\n",
+          addr==0x8001AD00u?"1AD00":"1AD24", sel,
+          cpu->gpr[3], cpu->gpr[4], cpu->gpr[30], cpu->lr, *c); }
+      return false; }
+    if(addr==0x8001A718u||addr==0x8001AD18u){
+      static unsigned _m1=0,_m2=0;
+      unsigned *c=addr==0x8001A718u?&_m1:&_m2; (*c)++;
+      if(*c<=6) fprintf(stderr,"[sel31324] %s r3=%u r4=%u lr=0x%08X (#%u)\n",
+        addr==0x8001A718u?"1A718":"1AD18",
+        cpu->gpr[3], cpu->gpr[4], cpu->lr, *c);
+      return false; }
+    if(addr==0x80005B64u||addr==0x80005BA0u||addr==0x80005BB0u){
+      static unsigned _e1=0,_e2=0,_e3=0;
+      unsigned *c=addr==0x80005B64u?&_e1:addr==0x80005BA0u?&_e2:&_e3; (*c)++;
+      if(*c<=8){ uint32_t w=0xDEADu; guest_read32(cpu->gpr[13]-30400u,&w);
+        fprintf(stderr,"[gxinit] mid %05X r3=0x%08X r4=0x%08X [-30400]=0x%08X lr=0x%08X (#%u)\n",
+          addr&0xFFFFFu, cpu->gpr[3], cpu->gpr[4], w, cpu->lr, *c); }
+      return false; }
+    if(addr==0x8001C01Cu){
+      static unsigned _c1=0; if(++_c1<=6){ uint32_t sel=0xDEADu,gate=0xDEADu,gw=0xDEADu;
+        guest_read32(cpu->gpr[13]-31324u,&sel);
+        guest_read32(cpu->gpr[13]-30412u,&gate);
+        if(gate>=GC_RAM_BASE) guest_read32(gate,&gw);
+        fprintf(stderr,"[sel31324] 1C01C-entry [-31324]=%u [-30412]=0x%08X [gate]=0x%08X r3=0x%08X lr=0x%08X (#%u)\n",
+          sel, gate, gw, cpu->gpr[3], cpu->lr, _c1); }
+      return false; }
+    if(addr==0x80005B10u){
+      static unsigned _b1=0; if(++_b1<=8)
+        fprintf(stderr,"[gxinit] 5B10-entry r3=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[3], cpu->lr, _b1);
+      return false; }
+    if(addr==0x80005C90u||addr==0x80005C9Cu||addr==0x80005CC8u||addr==0x80005CD4u){
+      static unsigned _s1=0,_s2=0,_s3=0,_s4=0;
+      unsigned *c=addr==0x80005C90u?&_s1:addr==0x80005C9Cu?&_s2:addr==0x80005CC8u?&_s3:&_s4; (*c)++;
+      if(*c<=4) fprintf(stderr,"[gxinit] %05X r3=0x%08X r4=0x%08X f1=%.3f lr=0x%08X (#%u)\n",
+        addr&0xFFFFFu, cpu->gpr[3], cpu->gpr[4], cpu->fpr[1], cpu->lr, *c);
+      return false; }
+    if(addr==0x80005CA0u||addr==0x80005AB4u){
+      static unsigned _a1=0,_a2=0;
+      unsigned *c=addr==0x80005CA0u?&_a1:&_a2; (*c)++;
+      if(*c<=4){ uint32_t w=0xDEADu; guest_read32(cpu->gpr[13]-30400u,&w);
+        fprintf(stderr,"[gxinit] post %05X r3=0x%08X r0=0x%08X [-30400]=0x%08X lr=0x%08X (#%u)\n",
+          addr&0xFFFFFu, cpu->gpr[3], cpu->gpr[0], w, cpu->lr, *c); }
+      return false; }
+    if(addr==0x80005A80u||addr==0x80005A8Cu||addr==0x80005ACCu){
+      static unsigned _l1=0,_l2=0,_l3=0;
+      unsigned *c=addr==0x80005A80u?&_l1:addr==0x80005A8Cu?&_l2:&_l3; (*c)++;
+      if(*c<=8) fprintf(stderr,"[mainloop] %05X r30=%d r31=%d lr=0x%08X (#%u)\n",
+        addr&0xFFFFFu, (int)cpu->gpr[30], (int)cpu->gpr[31], cpu->lr, *c);
+      return false; }
+    if(addr==0x80009FC4u||addr==0x80007264u||addr==0x80007278u){
+      static unsigned _ms=0; if(++_ms<=8)
+        fprintf(stderr,"[mtmsr] %05X r3/val=0x%08X msr_before=0x%08X lr=0x%08X (#%u)\n",
+          addr&0xFFFFFu, cpu->gpr[3], cpu->msr, cpu->lr, _ms);
       return false; }
     if(addr==0x800700F4u){
-      static unsigned _w=0; if(++_w<=4)
+      static unsigned _w=0; if(++_w<=16)
         fprintf(stderr,"[wait3] 700F4-filer r0=%u lr=0x%08X (#%u)\n",
           cpu->gpr[0], cpu->lr, _w);
       return false; }
@@ -2466,8 +2635,19 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
     // never enter the guest dispatcher. r3=exception code (4=external),
     // r4=context pointer.
     if(addr==0x8000D9CCu){
-      static unsigned _n=0; if(++_n<=8) fprintf(stderr,"[dvdsm] D9CC-dispatch r3=%u r4=0x%08X msr=0x%08X lr=0x%08X (#%u)\n",
+      static unsigned _n=0; if(++_n<=32) fprintf(stderr,"[dvdsm] D9CC-dispatch r3=%u r4=0x%08X msr=0x%08X lr=0x%08X (#%u)\n",
         cpu->gpr[3], cpu->gpr[4], cpu->msr, cpu->lr, _n);
+      return false; }
+    // fzEYzb204: EE-transition probes — D508 (OSEnable), D51C (restore),
+    // BFA0 (BEE8 mtmsr), BFBC (BEE8 rfi). Log msr before/after each so a
+    // stuck EE=0 shows WHICH site fails to set the bit. BFA0/BFBC are
+    // interior labels (never hle_host_call targets) — covered by the
+    // slice-tail EE-change probe below instead.
+    if(addr==0x8000D508u || addr==0x8000D51Cu){
+      static unsigned _e=0;
+      if(++_e<=32) fprintf(stderr,"[ee] %s msr=0x%08X lr=0x%08X r3=0x%08X (#%u)\n",
+        addr==0x8000D508u?"D508-enable":"D51C-restore",
+        cpu->msr, cpu->lr, cpu->gpr[3], _e);
       return false; }
     // fzEYzb110 (answered probe134 — 0 hits across 8 D9CC runs): the
     // D9CC table-walk interior (DC90/DCA4/DCC4/DCEC) NEVER dispatches —
@@ -2482,6 +2662,51 @@ static bool hle_host_call(CPUState* cpu, uint32_t addr){
         if(cpu->gpr[3]) guest_read32(cpu->gpr[3],&w);
         fprintf(stderr,"[dvdsm] 1B42C-entry r3=0x%08X [r3]=0x%08X r4=0x%08X lr=0x%08X (#%u)\n",
           cpu->gpr[3], w, cpu->gpr[4], cpu->lr, _n); }
+      return false; }
+    // fzEYzb200 probe248: 1B57C/1B58C/1B594/1B598 — the +280 store leg
+    // inside 1B42C. r16=[0x800000CC] (always 0), r17=gate low-bits.
+    // Dump r16/r17/r29/[r29+280]/[r29+276]/0x800000CC.
+    if(addr==0x8001B57Cu||addr==0x8001B58Cu||addr==0x8001B594u||addr==0x8001B598u){
+      static unsigned _p1=0,_p2=0,_p3=0,_p4=0;
+      unsigned *c=addr==0x8001B57Cu?&_p1:addr==0x8001B58Cu?&_p2:addr==0x8001B594u?&_p3:&_p4; (*c)++;
+      if(*c<=6){ uint32_t cc=0xDEADu,w280=0xDEADu,w276=0xDEADu;
+        guest_read32(0x800000CCu,&cc);
+        if(cpu->gpr[29]) guest_read32(cpu->gpr[29]+280u,&w280);
+        if(cpu->gpr[29]) guest_read32(cpu->gpr[29]+276u,&w276);
+        fprintf(stderr,"[sel31324] %s r16=%u r17=%u r29=0x%08X [r29+280]=0x%08X [r29+276]=0x%08X [CC]=0x%08X lr=0x%08X (#%u)\n",
+          addr==0x8001B57Cu?"1B57C":addr==0x8001B58Cu?"1B58C":addr==0x8001B594u?"1B594":"1B598",
+          cpu->gpr[16], cpu->gpr[17], cpu->gpr[29], w280, w276, cc, cpu->lr, *c); }
+      return false; }
+    // fzEYzb201 probe248: 1AC90 (dispatched, after bl FC7C) — the ACB0
+    // +280(r30) store prologue. Dump r28/r29/r30/r0/[r30+280]/[CC].
+    if(addr==0x8001AC90u){
+      static unsigned _ac=0; if(++_ac<=8){ uint32_t cc=0xDEADu,w280=0xDEADu,w276=0xDEADu;
+        guest_read32(0x800000CCu,&cc);
+        if(cpu->gpr[30]) guest_read32(cpu->gpr[30]+280u,&w280);
+        if(cpu->gpr[30]) guest_read32(cpu->gpr[30]+276u,&w276);
+        fprintf(stderr,"[sel31324] 1AC90 r28=0x%08X r29=0x%08X r30=0x%08X r0=0x%08X [r30+280]=0x%08X [r30+276]=0x%08X [CC]=0x%08X lr=0x%08X (#%u)\n",
+          cpu->gpr[28], cpu->gpr[29], cpu->gpr[30], cpu->gpr[0], w280, w276, cc, cpu->lr, _ac); }
+      return false; }
+    // fzEYzb202 probe248: 1A8B4 entry (writes 0x800000CC via 1A8D8) +
+    // 1AB18 (its only bl caller; r3 forced 0 at 1AB14).
+    if(addr==0x8001A8B4u||addr==0x8001AB18u){
+      static unsigned _b1=0,_b2=0;
+      unsigned *c=addr==0x8001A8B4u?&_b1:&_b2; (*c)++;
+      if(*c<=6) fprintf(stderr,"[sel31324] %s r3=0x%08X r31=0x%08X lr=0x%08X (#%u)\n",
+        addr==0x8001A8B4u?"1A8B4":"1AB18", cpu->gpr[3], cpu->gpr[31], cpu->lr, *c);
+      return false; }
+    // fzEYzb203 probe248: 70078 (after bl 32360 returns [-30672] in r3)
+    // + 70084 compare path. Dump r3, [-30352], [r4+20] = the two
+    // operands of the post-park selector compare.
+    if(addr==0x80070078u||addr==0x80070084u||addr==0x80070098u||addr==0x8007008Cu){
+      static unsigned _q1=0,_q2=0,_q3=0,_q4=0;
+      unsigned *c=addr==0x80070078u?&_q1:addr==0x80070084u?&_q2:addr==0x80070098u?&_q3:&_q4; (*c)++;
+      if(*c<=6){ uint32_t cur=0xDEADu,off20=0xDEADu;
+        guest_read32(cpu->gpr[13]-30352u,&cur);
+        if(cur>=GC_RAM_BASE) guest_read32(cur+20u,&off20);
+        fprintf(stderr,"[wait3] %s r3=0x%08X r4=0x%08X [-30352]=0x%08X [r4+20]=0x%08X lr=0x%08X (#%u)\n",
+          addr==0x80070078u?"70078-32360ret":addr==0x80070084u?"70084-cmpr":addr==0x80070098u?"70098-eq":"7008C-31D6C",
+          cpu->gpr[3], cpu->gpr[4], cur, off20, cpu->lr, *c); }
       return false; }
     // fzEYzb73: 1B42C RETURN continuations — r3 holds 1B42C's return value.
     // 706E8 follows the 706E4 call (setter path -> done-flag store next);
@@ -3024,12 +3249,21 @@ void recomp_run_slice(void){
                 fprintf(stderr,"[hle] exc 0x%X prog 0x%X msr=0x%08X hid2=0x%08X srr0 0x%08X srr1 0x%08X -> vec 0x%08X r1=0x%08X\n", g_cpu.exception, g_cpu.program_exception, g_cpu.msr, g_cpu.hid2, g_cpu.srr0, g_cpu.srr1, vec, g_cpu.gpr[1]);
                 s_last_exc_pc=vec; s_last_exc=g_cpu.exception;
             }
-            if(g_cpu.exception & PPC_EXC_FP_UNAVAILABLE){ g_cpu.msr|=0x2000u; g_cpu.srr1|=0x2000u; g_cpu.pc=g_cpu.srr0; g_cpu.exception=0; g_cpu.program_exception=0; continue; }
+            // fzEYzb202: HLE recovery must restore MSR from SRR1 like ppc_rfi.
+            // exception_msr already cleared EE on entry; resuming pc=srr0 with
+            // EE left clear permanently blocks chassis_deliver_external (gate
+            // MSR_EE). Restore full RFI mask, then force FP for the 0x800 leg.
+            if(g_cpu.exception & PPC_EXC_FP_UNAVAILABLE){
+                g_cpu.srr1|=0x2000u;
+                g_cpu.msr=(g_cpu.msr&~0x87C0FFFFu)|(g_cpu.srr1&0x87C0FFFFu);
+                g_cpu.pc=g_cpu.srr0; g_cpu.exception=0; g_cpu.program_exception=0; continue; }
             // System-call vector (0xC00): guest `sc` is the SDK cache-sync
             // barrier epilogue (dcbf-loop + sc + blr). The slice loop
             // emulates cia+4 directly; the FP fault above handles 0x800.
             // Other vectors (DSI/program/etc.) rfi per Strikers host.
-            if(vec==0xC00u){ g_cpu.pc=g_cpu.srr0; g_cpu.exception=0; g_cpu.program_exception=0; continue; }
+            if(vec==0xC00u){
+                g_cpu.msr=(g_cpu.msr&~0x87C0FFFFu)|(g_cpu.srr1&0x87C0FFFFu);
+                g_cpu.pc=g_cpu.srr0; g_cpu.exception=0; g_cpu.program_exception=0; continue; }
             if(vec>=0x200 && vec<0xD00){ ppc_rfi(&g_cpu, vec); g_cpu.exception=0; g_cpu.program_exception=0; continue; }
             if(g_cpu.exception & PPC_EXC_PROGRAM){ g_cpu.exception=0; break; }
             g_cpu.exception=0; break;
@@ -3044,7 +3278,9 @@ void recomp_run_slice(void){
         if(g_cpu.downcount < -800) g_cpu.downcount += 1000;
         if(pc==s_last_pc) s_same++; else {s_last_pc=pc; s_same=0;}
         if(false && s_same>256){ if(g_cpu.ctr>0) g_cpu.ctr--; g_cpu.pc+=4; s_same=0; continue; }
-        if(pc==0xC00u){ g_cpu.pc=g_cpu.srr0; g_cpu.exception=0; g_cpu.program_exception=0; continue; }
+        if(pc==0xC00u){
+            g_cpu.msr=(g_cpu.msr&~0x87C0FFFFu)|(g_cpu.srr1&0x87C0FFFFu);
+            g_cpu.pc=g_cpu.srr0; g_cpu.exception=0; g_cpu.program_exception=0; continue; }
         if(pc>=0x200 && pc<0xD00){ ppc_rfi(&g_cpu, pc); g_cpu.exception=0; g_cpu.program_exception=0; continue; }
         // fzEYzb129 (cpdc loop clamp — same class as the B670/B750/B7C4
         // clamps above: guest cache-block loops whose ctr derives from a
@@ -3581,6 +3817,7 @@ void recomp_run_slice(void){
           // frame returns, before the slice context is restored. Guarded:
           // 1M re-entries then restore + fall through to slice dispatch.
           int guard = 0;
+          int took_heap = 0;
           // fzEYzb48 (answered — frame terminates in <4k re-entries each
           // time: no frame# log ever printed, no guard trip. The 4
           // dispatches + 4 trampolines in 20s = completions #1-3 run to
@@ -3609,7 +3846,34 @@ void recomp_run_slice(void){
             // fzEYzb23 (answered — decode recorded in the fzEYzb25 comment;
             // tracer now quiet: it confirmed the frame exits via 1A178
             // lr=19230 with m60=14 frozen, and would spam every run).
-            dolrecomp_call(&g_cpu, g_cpu.pc); }
+            // fzEYzb189: heap/REL callbacks (e.g. 0x80216088 ARQ completion)
+            // have no static chunk — the old unconditional dolrecomp_call
+            // missed and spun here to the 1M guard, then restored the wait
+            // site with the callback body never run (probe242: 28M parked
+            // iters at 802162DC lr=802162DC after one guard trip). Step
+            // heap pcs on the interpreter instead; faults/unimplemented
+            // words break out (the slice owns vectors and miss logging).
+            if(g_cpu.exception) break;
+            if(dolrecomp_find_original(g_cpu.pc)){
+              dolrecomp_call(&g_cpu, g_cpu.pc); continue; }
+            if(g_cpu.pc >= 0x80000000u && g_cpu.pc < 0x81800000u){
+              extern bool rel_interp_step(CPUState* cpu, u32 cia);
+              took_heap = 1;
+              { static unsigned _h=0; if(_h<16) _h++;
+                fprintf(stderr,"[cb] heap-frame cb=0x%08X pc=0x%08X lr=0x%08X r3=0x%08X down=%lld (#%u)\n",
+                  cbpc, g_cpu.pc, g_cpu.lr, g_cpu.gpr[3], (long long)g_cpu.downcount, _h); }
+              if(!rel_interp_step(&g_cpu, g_cpu.pc)) break;
+              continue; }
+            break; }
+          // fzEYzb189: heap-body completion witness. Only frames that
+          // actually stepped the interpreter (took_heap) — the old
+          // address-range test counted DOL INQUIRY exits and hid the
+          // heap one (probe243: cap hit by cb=0x80018D1C before
+          // cb=0x80216088 logged). Reached-RETURN = body ran to blr.
+          if(took_heap){
+            static unsigned _hc=0; _hc++;
+              fprintf(stderr,"[cb] heap-frame exit cb=0x%08X pc=0x%08X exc=0x%X guard=%d (#%u)\n",
+                cbpc, g_cpu.pc, g_cpu.exception, guard, _hc); }
           dol_hle_handle_callback_return(&g_cpu, HLE_CALLBACK_RETURN);
           continue; }
         // First-dispatch trace: log each never-before-dispatched pc once.
@@ -3761,6 +4025,36 @@ void recomp_run_slice(void){
                     _r30, _m0, _m20, _w0, _w20,
                     (unsigned long long)g_cpu.timebase, _pk);
             }
+        }
+        // fzEYzb205: EE-transition diagnostic — log every MSR[EE] edge with
+        // pc/lr so a permanent clear names the last site that dropped it.
+        // fzEYzb206: FORCE-EE removed (see below); srr1 restore is the fix.
+        {
+            static uint32_t s_prev_ee = 0;
+            static unsigned s_ee_edges = 0, s_force = 0;
+            uint32_t ee = g_cpu.msr & MSR_EE;
+            if(ee != s_prev_ee){
+                if(++s_ee_edges <= 48)
+                    fprintf(stderr,"[ee] edge %s->%s pc=0x%08X lr=0x%08X msr=0x%08X (#%u)\n",
+                        s_prev_ee?"1":"0", ee?"1":"0", g_cpu.pc, g_cpu.lr, g_cpu.msr, s_ee_edges);
+                s_prev_ee = ee;
+            }
+            // fzEYzb206: FORCE-EE gated OFF. It was a diagnostic for the
+            // pre-fzEYzb202 park (EE stuck clear after srr1 restore miss).
+            // With msr-from-srr1 recovery in place, forcing EE while a
+            // pending cause exists NESTS delivery inside OSDisable windows
+            // (probe249: FORCE during 1140C / 16A38 with EE=0) and was a
+            // leading suspect for context clobber at 0x8015C430. Edge log
+            // above is kept; re-enable s_force only if a future park needs it.
+            (void)s_force;
+            // if(!ee && dol_interrupts_external_pending(&s_interrupts) && s_force < 32){
+            //     g_cpu.msr |= MSR_EE;
+            //     s_force++;
+            //     fprintf(stderr,"[ee] FORCE-EE delivery %llu cause=0x%08X mask=0x%08X pc=0x%08X (#%u)\n",
+            //         (unsigned long long)s_ext_deliveries,
+            //         dol_interrupts_pi_cause(&s_interrupts),
+            //         dol_interrupts_pi_mask(&s_interrupts), g_cpu.pc, s_force);
+            // }
         }
         if(++s_slice_n % (16384ull*75ull) == 0) log_backchain(); // ~75 slices
     }

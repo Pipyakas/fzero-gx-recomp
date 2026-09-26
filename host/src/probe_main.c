@@ -21,7 +21,10 @@ int main(int argc, char **argv) {
             fflush(stdout);
         }
     }
-    printf("[probe] done pc=0x%08X\n", recomp_pc());
+    printf("[probe] done pc=0x%08X frames=%u gp_bytes=%u mmio_r=%llu\n",
+           recomp_pc(), recomp_frames(), recomp_gp_bytes(),
+           (unsigned long long)recomp_mmio_reads());
+    fflush(stdout);
     recomp_shutdown();
     return 0;
 }

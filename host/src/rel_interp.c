@@ -709,7 +709,7 @@ bool rel_interp_step(CPUState* cpu, u32 cia) {
         }
         case 146: // mtmsr
             if (R_RA(raw) || R_RB(raw) || rc) break;
-            cpu->msr = s;
+            cpu->msr = s | 0x2000u; /* force MSR.FP (PLAN fzEYzb61) */
             cpu->pc = cia + 4; return true;
         case 150: { // stwcx. (decoder: rc must be 1)
             if (!rc) break;

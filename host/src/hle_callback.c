@@ -95,7 +95,7 @@ static void restore_callback_context(CPUState* cpu, const HleSavedContext* saved
     cpu->cr = saved->cr;
     cpu->xer = saved->xer;
     cpu->fpscr = saved->fpscr;
-    cpu->msr = saved->msr;
+    cpu->msr = saved->msr | 0x2000u; /* force MSR.FP across callback restore */
     cpu->srr0 = saved->srr0;
     cpu->srr1 = saved->srr1;
     cpu->dar = saved->dar;
